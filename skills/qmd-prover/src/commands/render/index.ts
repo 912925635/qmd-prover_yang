@@ -8,6 +8,7 @@ import { resolveProjectSnapshot } from '../../core/graph/snapshot.js';
 import { compileProject } from '../../core/semantic/compiler.js';
 import { verificationContext } from '../../core/verification/protocol.js';
 import { SCHEMA_VERSION } from '../../core/shared/core.js';
+import { layoutGraph, V_GAP } from './layout.js';
 import type { Diagnostic, OperationResult, CompilerOptions, RenderOptions } from '../../core/shared/types.js';
 import type { Compilation, CompilationSummary } from '../../core/semantic/compiler.js';
 import type { DependencyGraph } from '../../core/semantic/dependency-graph.js';
@@ -28,25 +29,30 @@ function escapeXml(value: unknown = ''): string {
 }
 
 function graphSvg(graph: DependencyGraph): string {
-  const width = 900;
-  const row = 78;
-  const height = Math.max(120, graph.nodes.length * row + 40);
-  const positions = new Map<string, { x: number; y: number }>(graph.nodes.map((node, index) => [node.id, { x: 40 + (index % 2) * 450, y: 30 + index * row }]));
-  const edges = graph.edges.map((edge) => {
-    const from = positions.get(edge.from); const to = positions.get(edge.to);
-    if (!from || !to) return '';
-    return `<line x1="${from.x + 180}" y1="${from.y + 24}" x2="${to.x + 180}" y2="${to.y + 24}" stroke="#9aa5b8" stroke-width="1.5"/>`;
+  const layout = layoutGraph(graph, { hasse: true });
+  const boxes = new Map(layout.nodes.map((node) => [node.id, node]));
+  const defs = '<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa5b8"/></marker></defs>';
+  const bend = V_GAP / 2;
+  const edges = layout.edges.map((edge) => {
+    const [start, ...rest] = edge.points;
+    const path = edge.back
+      ? rest.map((point) => `C ${Math.max(start.x, point.x) + 60} ${start.y}, ${Math.max(start.x, point.x) + 60} ${point.y}, ${point.x} ${point.y}`).join(' ')
+      : rest.map((point, index) => {
+          const previous = index === 0 ? start : rest[index - 1];
+          return `C ${previous.x} ${previous.y + bend}, ${point.x} ${point.y - bend}, ${point.x} ${point.y}`;
+        }).join(' ');
+    return `<path d="M ${start.x} ${start.y} ${path}" fill="none" stroke="#9aa5b8" stroke-width="1.5"${edge.back ? ' stroke-dasharray="4 3"' : ''} marker-end="url(#arrow)"/>`;
   }).join('');
   const nodes = graph.nodes.map((node) => {
-    const position = positions.get(node.id);
+    const position = boxes.get(node.id);
     if (!position) return '';
     const href = `../../${node.file}#${node.id}`;
     const local = node.local_verification?.status ?? 'not-run';
     const global = node.global_verification?.status ?? 'unverified';
     const title = `${node.id}: ${node.title} (local: ${local}; global: ${global})${node.disproof ? ` — ${node.disproof.refutation}` : ''}`;
-    return `<a href="${escapeXml(href)}"><g><title>${escapeXml(title)}</title><rect x="${position.x}" y="${position.y}" width="360" height="48" rx="8" fill="#fff" stroke="#64748b"/><text x="${position.x + 12}" y="${position.y + 20}" font-family="sans-serif" font-size="13">${escapeXml(node.id)}</text><text x="${position.x + 12}" y="${position.y + 38}" font-family="sans-serif" font-size="11" fill="#586174">${escapeXml(`local ${local}; global ${global}`)}</text></g></a>`;
+    return `<a href="${escapeXml(href)}"><g><title>${escapeXml(title)}</title><rect x="${position.x}" y="${position.y}" width="${position.width}" height="${position.height}" rx="8" fill="#fff" stroke="#64748b"/><text x="${position.x + 12}" y="${position.y + 20}" font-family="sans-serif" font-size="13">${escapeXml(node.id)}</text><text x="${position.x + 12}" y="${position.y + 38}" font-family="sans-serif" font-size="11" fill="#586174">${escapeXml(`local ${local}; global ${global}`)}</text></g></a>`;
   }).join('');
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Theorem dependency graph">${edges}${nodes}</svg>\n`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="Theorem dependency graph">${defs}${edges}${nodes}</svg>\n`;
 }
 
 function statusQmd(compilation: Compilation): string {

@@ -172,21 +172,25 @@ open, and what is blocked. In the example this fills `workspace/` with files lik
 
 ### 6. Check the progress while it works (optional)
 
-A real proof can take a while. To look in on it *without interrupting* the session that is working,
-open a **second** assistant session in the same folder. Then ask:
+A real proof can take a while. There are two ways to look in on it *without interrupting* the
+session that is working.
+
+**Ask a second session.** Open a **second** assistant session in the same folder. Then ask:
 
 > **"What is proved, what is open, and what is blocked right now?"**
 
 This second session reads the same project files and gives you the current picture without disturbing
 the one that is still proving.
 
-<!-- ### 8. See it rendered (optional)
+**Read the book.** The project is a Quarto book, so you can turn everything written so far into a
+web page (or PDF) you can read and click through: each result linked to its proof and to everything
+it depends on, plus a colored picture of the dependency graph. Ask the second session:
 
 > **"Render the project so I can browse it."**
 
-The assistant turns your work into a web page (or PDF) you can read and click through: each result
-linked to its proof and to everything it depends on, plus a colored picture of the dependency graph.
-This last step needs Quarto installed (see [Requirements](#requirements)). -->
+Or, if you are comfortable with a terminal, run `quarto preview` in the folder yourself and it opens
+in your browser, re-rendering as the proofs grow. Either way this needs Quarto installed (see
+[Install by hand](#install-by-hand)).
 
 ---
 

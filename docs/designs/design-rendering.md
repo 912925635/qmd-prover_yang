@@ -261,6 +261,15 @@ dependencies. Citations outside a consumer's declared import scope are
 diagnostics, not published graph edges; a legal edge into an unverified
 protected main goal is published but marked blocked.
 
+The generated SVG draws the graph as a layered Hasse diagram: main goals on
+the top row, definitions and axioms on the bottom, every dependency arrow
+pointing downward. Rows come from longest-path layering, in-row order from a
+fixed number of barycenter sweeps, and edges implied by longer citation paths
+are hidden from the picture (the graph data and dependency queries keep every
+edge). Edges that participate in a citation cycle cannot point downward and
+are drawn dashed. The drawing is deterministic: the same snapshot always
+produces the same bytes.
+
 ### Example graph inclusion
 
 If render preparation produces
