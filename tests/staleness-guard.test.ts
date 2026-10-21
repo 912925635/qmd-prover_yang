@@ -61,7 +61,7 @@ test('status projection refuses to write onto bytes that changed after compilati
     // Control: with the bytes untouched, the verdict is projected as a status attribute.
     const compilation = await compileProject(root, options);
     const context = await verificationContext(compilation);
-    const run = await verifyFacts(compilation, context, options);
+    const run = await verifyFacts(compilation, context);
     await writeStatusProjection(compilation, run, options);
     const projected = await readFile(file, 'utf8');
     assert.ok(projected.includes('status="verified"'), projected);
@@ -69,7 +69,7 @@ test('status projection refuses to write onto bytes that changed after compilati
     // A concurrent edit lands after verification: the projection must leave the file alone.
     const compilationBefore = await compileProject(root, options);
     const contextBefore = await verificationContext(compilationBefore);
-    const runBefore = await verifyFacts(compilationBefore, contextBefore, options);
+    const runBefore = await verifyFacts(compilationBefore, contextBefore);
     const edited = original.replace('An argument.', 'A rewritten argument.');
     await writeFile(file, edited);
     await writeStatusProjection(compilationBefore, runBefore, options);
