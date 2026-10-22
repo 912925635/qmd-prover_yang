@@ -34,7 +34,7 @@
 - `report.ts:16` 将写入限定到 `.qmd-prover/proof-review`；`:22`/`:23` 写独立 JSON/Markdown，然后目录 rename。没有正式 verdict/graph/source 的写入路径。
 - `roles.ts:14`/`:36` 创建及删除临时 cwd。外部 adapter 是可信进程并继承环境；这里没有 OS 级恶意 adapter 文件写入隔离。Codex read-only 模式也不能证明独立数学判断。
 - 完整 diff 相对 142e7f8 的 `skills/qmd-prover/src` 和 `skills/qmd-prover/scripts` 均为空；原正式 schema v8、protocol v6、verified/rejected 状态机及缓存契约未变。
-- 完整 diff 中既有 `tests/staleness-guard.test.ts` 的两行修改仅移除 verifyFacts 的多余第三实参，匹配现有两参签名；两处 stale-projection 断言保留，未改生产状态逻辑。
+- 后续勘误：初审将 `tests/staleness-guard.test.ts` 的第三实参判为多余并删除，这一判断不成立。`verifyFacts` 实际有可选第三参，且内部新鲜度复查会把该参交给编译器；删除 `options` 使测试隐式依赖系统 Pandoc。历史 127/127 是当时环境的结果，不能证明测试没有环境依赖。后续修复和受控复现见 [Pandoc 选项修复记录](proof-review-pandoc-options-fix.md)；本记录的摘要表仍对应原 r1 标签，不代表修复后的 HEAD。
 
 正式实现的 Git tree 身份（与 142e7f8、b518ebd 相同）：
 

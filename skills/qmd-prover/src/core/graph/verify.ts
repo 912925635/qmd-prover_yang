@@ -167,7 +167,7 @@ export function topologicalOrder(results: SemanticResult[]): SemanticResult[] {
  *   diagnostics  = sort(mechanicalDiagnostics ++ aiDiagnostics)
  *   return { verification, facts: composition.facts, diagnostics, selected: verificationIds }
  */
-export async function verifyFacts(compilation: Compilation, context: VerificationContext, options: SelectionOptions = {}): Promise<VerificationRun> {
+export async function verifyFacts(compilation: Compilation, context: VerificationContext, options: CompilerOptions & SelectionOptions = {}): Promise<VerificationRun> {
   const root = compilation.root;
   const config = compilation.config;
   const results = compilation.manifest.results;
