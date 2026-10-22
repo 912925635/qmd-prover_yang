@@ -4,7 +4,7 @@ import { compileProject, factErrors, factIntent, hasCheckableContent } from '../
 import type { Compilation } from '../semantic/compiler.js';
 import { externalPolicyHash } from '../infrastructure/external.js';
 import { atomicJson, atomicWrite, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout } from '../infrastructure/aux.js';
+import { auxLayout } from '../infrastructure/auxiliary.js';
 import { findDiv, findProofs, locateDivs, readLocatedBlock, readLocatedProof, setStatusAttribute } from '../semantic/source.js';
 import type { LocatedBlock, LocatedDiv } from '../semantic/source.js';
 import { buildVerifierPacket, checkerContract, configured, invokeVerifier, verificationContext, verificationKey, verificationOutcome } from '../verification/protocol.js';

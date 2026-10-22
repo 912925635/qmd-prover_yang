@@ -4,7 +4,7 @@ import { compileProject } from '../../core/semantic/compiler.js';
 import { resolveProjectSnapshot } from '../../core/graph/snapshot.js';
 import { externalPolicyHash } from '../../core/infrastructure/external.js';
 import { readJson, stableJson } from '../../core/infrastructure/files.js';
-import { auxLayout } from '../../core/infrastructure/aux.js';
+import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { SCHEMA_VERSION, hasErrorCode, isRecord } from '../../core/shared/core.js';
 import { checkerContract, verificationContext, verificationOutcome } from '../../core/verification/protocol.js';
 async function jsonFiles(directory) {

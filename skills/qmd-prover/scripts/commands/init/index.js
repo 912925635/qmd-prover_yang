@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { readExternalPolicy } from '../../core/infrastructure/external.js';
 import { atomicWrite, exists, relativePosix } from '../../core/infrastructure/files.js';
-import { auxLayout, scaffoldAux, withWriteLock } from '../../core/infrastructure/aux.js';
+import { auxLayout, scaffoldAux, withWriteLock } from '../../core/infrastructure/auxiliary.js';
 import { readCanonicalContract } from '../../core/infrastructure/contract.js';
 import { SCHEMA_VERSION } from '../../core/shared/core.js';
 const START = '<!-- qmd-prover-contract:start version=';

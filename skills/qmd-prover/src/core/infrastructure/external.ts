@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { exists, relativePosix, sha256 } from './files.js';
-import { auxLayout } from './aux.js';
+import { auxLayout } from './auxiliary.js';
 import type { JsonObject } from '../shared/types.js';
 
 export interface ExternalPolicy extends JsonObject {
