@@ -4,7 +4,7 @@ import { compileProject, factErrors, factIntent, hasCheckableContent } from '../
 import type { Compilation } from '../semantic/compiler.js';
 import { externalPolicyHash } from '../infrastructure/external.js';
 import { atomicJson, atomicWrite, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout } from '../infrastructure/aux.js';
+import { auxLayout } from '../infrastructure/auxiliary.js';
 import { findDiv, findProofs, locateDivs, readLocatedBlock, readLocatedProof, setStatusAttribute } from '../semantic/source.js';
 import type { LocatedBlock, LocatedDiv } from '../semantic/source.js';
 import { buildVerifierPacket, checkerContract, configured, invokeVerifier, verificationContext, verificationKey, verificationOutcome } from '../verification/protocol.js';
@@ -167,7 +167,7 @@ export function topologicalOrder(results: SemanticResult[]): SemanticResult[] {
  *   diagnostics  = sort(mechanicalDiagnostics ++ aiDiagnostics)
  *   return { verification, facts: composition.facts, diagnostics, selected: verificationIds }
  */
-export async function verifyFacts(compilation: Compilation, context: VerificationContext, options: SelectionOptions = {}): Promise<VerificationRun> {
+export async function verifyFacts(compilation: Compilation, context: VerificationContext, options: CompilerOptions & SelectionOptions = {}): Promise<VerificationRun> {
   const root = compilation.root;
   const config = compilation.config;
   const results = compilation.manifest.results;

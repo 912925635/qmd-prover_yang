@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { atomicJson, readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout, scaffoldAuxGitignore } from '../infrastructure/aux.js';
+import { auxLayout, scaffoldAuxGitignore } from '../infrastructure/auxiliary.js';
 import { SCHEMA_VERSION } from '../shared/core.js';
 // A graph node is a topology-plus-status view. The verbose per-fact detail
 // (verifier reasons/reports, statement and proof hashes) lives in the manifest

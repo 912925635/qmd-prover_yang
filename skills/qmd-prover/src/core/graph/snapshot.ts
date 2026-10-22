@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { atomicJson, readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout, scaffoldAuxGitignore } from '../infrastructure/aux.js';
+import { auxLayout, scaffoldAuxGitignore } from '../infrastructure/auxiliary.js';
 import { SCHEMA_VERSION } from '../shared/core.js';
 import type { Diagnostic, CompilerOptions } from '../shared/types.js';
 import type { Compilation } from '../semantic/compiler.js';

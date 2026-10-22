@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicJson, cleanId, readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout, scaffoldAux } from '../infrastructure/aux.js';
+import { auxLayout, scaffoldAux } from '../infrastructure/auxiliary.js';
 import { loadConfig, pandocCommand } from '../infrastructure/config.js';
 import { divContent, inlineText, metaValue, normalizedAst, readAst, references, walk } from './pandoc.js';
 import { findDiv, findProofs, locateDivs } from './source.js';
