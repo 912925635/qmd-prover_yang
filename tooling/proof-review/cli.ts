@@ -20,7 +20,13 @@ export async function main(args: string[]): Promise<number> {
   if (path.basename(checks) !== 'checks' || path.basename(path.dirname(checks)) !== 'verification'
     || path.basename(path.dirname(path.dirname(checks))) !== '.qmd-prover') throw new Error('Record must be under .qmd-prover/verification/checks/');
   const projectRoot = path.dirname(path.dirname(path.dirname(checks)));
-  const report = await reviewRecord(record, path.resolve(flags.get('--policy')!));
+  const controller = new AbortController();
+  const cancel = (): void => controller.abort();
+  process.once('SIGINT', cancel);
+  process.once('SIGTERM', cancel);
+  let report;
+  try { report = await reviewRecord(record, path.resolve(flags.get('--policy')!), { signal: controller.signal }); }
+  finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
   const directory = await saveReport(projectRoot, report);
   process.stdout.write(`${JSON.stringify({ directory, stage_status: report.stage_status, outcome: report.outcome })}\n`);
   // 0 means this preparation stage completed, never mathematical acceptance.

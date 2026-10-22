@@ -84,9 +84,9 @@ export async function readRecordedPacket(file: string): Promise<RecordedPacket> 
   if (scope.type !== 'local-conditional-check' || scopeIds.length !== ids.size || new Set(scopeIds).size !== ids.size
     || scopeIds.some((depId) => !ids.has(depId))) throw new Error('Dependency scope mismatch');
   const context: ReviewRequest['context'] = {
-    target: { id, kind: text(target.kind, 'target.kind'), statement, proof },
-    dependencies,
-    external_basis: { mode: String(basis.mode), content: basis.content as string | null },
+    target: { id, kind: text(target.kind, 'target.kind'), statement_source: 'target.statement', proof_source: 'target.proof' },
+    dependencies: dependencies.map((dep) => ({ id: dep.id, kind: dep.kind, statement_source: `dependency:${dep.id}.statement` })),
+    external_basis: { mode: String(basis.mode), content_source: basis.content === null ? null : 'external_basis.content' },
     checker_contract: packet.checker_contract
   };
   const sources: Record<string, string> = {

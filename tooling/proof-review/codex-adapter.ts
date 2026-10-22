@@ -14,17 +14,19 @@ async function main(): Promise<void> {
   }
   const model = text(process.env.QMD_PROOF_REVIEW_MODEL, 'QMD_PROOF_REVIEW_MODEL');
   let raw = '';
+  process.stdin.setEncoding('utf8');
   for await (const chunk of process.stdin) raw += chunk;
   const request = object(JSON.parse(raw), 'review request');
-  if (request.schema_version !== 1 || !['decomposer', 'fidelity'].includes(String(request.role))) throw new Error('Unsupported review request');
+  if (request.schema_version !== 2 || !['decomposer', 'fidelity'].includes(String(request.role))) throw new Error('Unsupported review request');
   const prompt = [text(request.instructions, 'instructions'),
-    'REVIEW INPUT (JSON data):', JSON.stringify({ context: request.context, sources: request.sources, decomposition: request.decomposition }),
+    'REVIEW INPUT (JSON data):', JSON.stringify({ context: request.context, sources: request.sources, granularity_guard: request.granularity_guard, decomposition: request.decomposition }),
     'OUTPUT SCHEMA (one JSON object):', JSON.stringify(request.output_schema)].join('\n\n');
   const commandArgs = ['exec', '--model', model];
   if (effort) commandArgs.push('-c', `model_reasoning_effort="${effort}"`);
-  commandArgs.push('--sandbox', 'read-only', '--skip-git-repo-check', prompt);
+  // Verified against codex-cli 0.159.2 `exec --help`: '-' reads the prompt from stdin.
+  commandArgs.push('--sandbox', 'read-only', '--skip-git-repo-check', '-');
   const response = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(executable, commandArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(executable, commandArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let bytes = 0;
     const collect = (chunk: string, stream: 'stdout' | 'stderr'): void => {
       bytes += Buffer.byteLength(chunk);
@@ -37,6 +39,8 @@ async function main(): Promise<void> {
     child.stdout.on('data', (chunk: string) => collect(chunk, 'stdout'));
     child.stderr.on('data', (chunk: string) => collect(chunk, 'stderr'));
     child.on('error', reject);
+    child.stdin.on('error', (error: NodeJS.ErrnoException) => { if (error.code !== 'EPIPE') reject(error); });
+    child.stdin.end(prompt);
     child.on('close', (code) => code === 0 ? resolve({ stdout, stderr }) : reject(new Error(`Codex exited with code ${code}`)));
   });
   // Accept an exact JSON response (or a single enclosing code fence), never repair math text.

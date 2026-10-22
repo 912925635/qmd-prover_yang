@@ -3,11 +3,11 @@ export interface Anchor {
   source: string;
   start: number;
   end: number;
-  quoted_text: string;
 }
 
 export interface ProofObligation {
   id: string;
+  kind: 'inference' | 'context';
   source_span: Anchor;
   premises: Anchor[];
   conclusion: Anchor;
@@ -16,7 +16,8 @@ export interface ProofObligation {
 }
 
 export interface Decomposition {
-  target_statement: string;
+  target_statement: Anchor;
+  final_obligation_id: string;
   obligations: ProofObligation[];
 }
 
@@ -46,22 +47,26 @@ export interface RolePolicy {
 export interface ReviewPolicy {
   schema_version: 1;
   max_obligations: number;
+  /** Trusted policy knobs, not model-selected exemptions. Defaults: 2 and 1. */
+  min_inference_obligations?: number;
+  max_span_paragraphs?: number;
   timeout_ms: number;
   max_output_bytes: number;
   roles: { decomposer: RolePolicy; fidelity: RolePolicy };
 }
 
 export interface ReviewRequest {
-  schema_version: 1;
+  schema_version: 2;
   role: 'decomposer' | 'fidelity';
   instructions: string;
   context: {
-    target: { id: string; kind: string; statement: string; proof: string };
-    dependencies: { id: string; kind: string; statement: string }[];
-    external_basis: { mode: string; content: string | null };
+    target: { id: string; kind: string; statement_source: string; proof_source: string };
+    dependencies: { id: string; kind: string; statement_source: string }[];
+    external_basis: { mode: string; content_source: string | null };
     checker_contract: unknown;
   };
   sources: Record<string, string>;
+  granularity_guard: { min_inference_obligations: number; max_span_paragraphs: number };
   decomposition?: Decomposition;
   output_schema: unknown;
 }
@@ -78,7 +83,7 @@ export interface CallTrace {
 }
 
 export interface ProofReviewReport {
-  schema_version: 1;
+  schema_version: 2;
   phase: 'decomposition-and-faithfulness';
   target: string;
   verifier_packet_hash: string;
@@ -87,6 +92,8 @@ export interface ProofReviewReport {
   source_identity: { statement_hash: string; proof_hash: string };
   applicability: 'recorded-packet-only';
   current_source_checked: false;
+  /** Canonical corpus; anchors can be resolved without the old check record. */
+  sources: Record<string, string>;
   decomposition: Decomposition | null;
   structural_issues: string[];
   fidelity: FidelityReview | null;

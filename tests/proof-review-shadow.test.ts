@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
+import { cp } from 'node:fs/promises';
 import { buildVerifierPacket, verificationKey } from '../skills/qmd-prover/src/core/verification/protocol.js';
 import { sha256, stableJson } from '../skills/qmd-prover/src/core/infrastructure/files.js';
 import { SCHEMA_VERSION } from '../skills/qmd-prover/src/core/shared/core.js';
@@ -14,23 +15,23 @@ import { readFidelity } from '../tooling/proof-review/faithfulness.js';
 import { loadPolicy } from '../tooling/proof-review/policy.js';
 import { reviewRecord } from '../tooling/proof-review/review.js';
 import { markdownReport, saveReport } from '../tooling/proof-review/report.js';
-import type { ReviewPolicy } from '../tooling/proof-review/types.js';
+import type { Decomposition, ReviewPolicy } from '../tooling/proof-review/types.js';
 import { inspectProject } from '../skills/qmd-prover/src/commands/inspect/index.js';
 import { options, project, result, verifier } from './support.js';
 
 const statement = 'There exists a minimizer of f.';
 const proof = 'Choose x in the domain.\nThus x minimizes f.';
 function anchor(source: string, content: string, start = 0, end = content.length) {
-  return { source, start, end, quoted_text: content.slice(start, end) };
+  return { source, start, end };
 }
-function proposal() {
+function proposal(): Decomposition {
   const split = proof.indexOf('\n');
   return {
-    target_statement: statement,
+    target_statement: anchor('target.statement', statement), final_obligation_id: 'lem-test#step-2',
     obligations: [
-      { id: 'lem-test#step-1', source_span: anchor('target.proof', proof, 0, split), premises: [],
+      { id: 'lem-test#step-1', kind: 'inference', source_span: anchor('target.proof', proof, 0, split), premises: [],
         conclusion: anchor('target.proof', proof, 0, split), inference: 'The author chooses an element.', internal_dependencies: [] },
-      { id: 'lem-test#step-2', source_span: anchor('target.proof', proof, split + 1), premises: [anchor('target.proof', proof, 0, split)],
+      { id: 'lem-test#step-2', kind: 'inference', source_span: anchor('target.proof', proof, split + 1), premises: [anchor('target.proof', proof, 0, split)],
         conclusion: anchor('target.statement', statement), inference: 'The author asserts optimality without further justification.', internal_dependencies: ['lem-test#step-1'] }
     ]
   };
@@ -123,7 +124,7 @@ test('shadow tooling consumes an actual unchanged engine record, including unres
   const recordBefore = await readFile(record, 'utf8');
   const input = await readRecordedPacket(record);
   assert.equal(input.context.external_basis.mode, 'unrestricted');
-  assert.equal(input.context.external_basis.content, null);
+  assert.equal(input.context.external_basis.content_source, null);
   const report = await reviewRecord(record, f.policyFile);
   assert.equal(report.stage_status, 'ready_for_proof_review', JSON.stringify(report.structural_issues));
   await saveReport(root, report);
@@ -150,9 +151,9 @@ test('source anchors and full coverage reject omitted steps, invented premises, 
   const f = await fixture(t);
   const input = await readRecordedPacket(f.recordFile);
   const mutations = [
-    (p: ReturnType<typeof proposal>) => { p.target_statement = 'Every minimizer of f is unique.'; },
+    (p: ReturnType<typeof proposal>) => { Object.assign(p.target_statement, { quoted_text: 'Every minimizer of f is unique.' }); },
     (p: ReturnType<typeof proposal>) => { p.obligations.pop(); },
-    (p: ReturnType<typeof proposal>) => { p.obligations[0].source_span.quoted_text = 'Invented proof'; },
+    (p: ReturnType<typeof proposal>) => { Object.assign(p.obligations[0].source_span, { quoted_text: 'Invented proof' }); },
     (p: ReturnType<typeof proposal>) => { p.obligations[1].premises.push(anchor('dependency:missing.statement', 'f is convex')); },
     (p: ReturnType<typeof proposal>) => { p.obligations[0].internal_dependencies.push('lem-test#step-2'); },
     (p: ReturnType<typeof proposal>) => { p.obligations[0].premises.push(anchor('target.proof', proof)); },
@@ -170,11 +171,11 @@ test('exact UTF-16 source spans work for non-ASCII mathematics and reject imprec
   const f = await fixture(t);
   const input = await readRecordedPacket(f.recordFile);
   const unicode = '取 x ∈ ℂ。🧮\n故存在。';
-  input.context.target.proof = unicode;
   input.sources['target.proof'] = unicode;
   const value = proposal();
-  value.obligations = [{ ...value.obligations[0], source_span: anchor('target.proof', unicode), conclusion: anchor('target.proof', unicode) }];
-  assert.equal(readDecomposition(value, input, 20).obligations[0].source_span.end, unicode.length);
+  value.final_obligation_id = 'lem-test#step-1';
+  value.obligations = [{ ...value.obligations[0], source_span: anchor('target.proof', unicode), conclusion: anchor('target.statement', statement) }];
+  assert.equal(readDecomposition(value, input, 20, { min_inference_obligations: 1 }).obligations[0].source_span.end, unicode.length);
   value.obligations[0].source_span.end -= 1;
   assert.throws(() => readDecomposition(value, input, 20));
 });
@@ -203,6 +204,118 @@ test('fidelity pass cannot omit obligations, target preservation, or sourced mis
     { ...faithful(), status: 'fail' },
     { ...faithful(), issues: [{ kind: 'other', obligation_id: null, explanation: 'problem', source_refs: [] }] }
   ]) assert.throws(() => readFidelity(value, decomposition, input.sources));
+});
+
+test('a target statement anchor, including a proper substring, is mechanically forbidden as a premise', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  for (const premise of [anchor('target.statement', statement), anchor('target.statement', statement, 0, 5)]) {
+    const p = proposal();
+    p.obligations[1].premises.push(premise);
+    assert.throws(() => readDecomposition(p, input, 20), /never an obligation premise/);
+  }
+});
+
+test('whole-proof single obligations need an explicit trusted one-step policy, never a model exemption', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  const p = proposal();
+  p.final_obligation_id = 'lem-test#step-1';
+  p.obligations = [{ ...p.obligations[1], id: 'lem-test#step-1', source_span: anchor('target.proof', proof), premises: [], internal_dependencies: [] }];
+  assert.throws(() => readDecomposition(p, input, 20), /too few inference/);
+  assert.doesNotThrow(() => readDecomposition(p, input, 20, { min_inference_obligations: 1 }));
+  p.obligations[0].kind = 'context';
+  assert.throws(() => readDecomposition(p, input, 20, { min_inference_obligations: 1 }), /Final inference/);
+});
+
+test('paragraph granularity guard uses source structure as well as inference counts', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  const body = 'Case one follows.\n\nCase two follows.\n\nCombine both cases.';
+  input.sources['target.proof'] = body;
+  const end = body.lastIndexOf('\n\n');
+  const p = proposal();
+  p.obligations[0].source_span = anchor('target.proof', body, 0, end);
+  p.obligations[0].conclusion = anchor('target.proof', body, 0, end);
+  p.obligations[1].source_span = anchor('target.proof', body, end + 2);
+  p.obligations[1].premises = [];
+  assert.throws(() => readDecomposition(p, input, 20), /too many proof paragraphs/);
+  assert.doesNotThrow(() => readDecomposition(p, input, 20, { max_span_paragraphs: 2 }));
+});
+
+test('the final obligation must be last and conclude the complete exact target', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  for (const mutation of [
+    (p: Decomposition) => { p.final_obligation_id = 'missing'; },
+    (p: Decomposition) => { p.final_obligation_id = p.obligations[0].id; },
+    (p: Decomposition) => { p.obligations[1].conclusion.end -= 1; },
+    (p: Decomposition) => { p.obligations[1].conclusion = p.obligations[1].source_span; },
+    (p: Decomposition) => { p.obligations[1].kind = 'context'; }
+  ]) { const p = proposal(); mutation(p); assert.throws(() => readDecomposition(p, input, 20)); }
+});
+
+test('all load-bearing inference obligations must have a declared path to the final goal', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  const p = proposal();
+  p.obligations[1].premises = [];
+  p.obligations[1].internal_dependencies = [];
+  assert.throws(() => readDecomposition(p, input, 20), /disconnected/);
+  p.obligations[0].kind = 'context';
+  assert.doesNotThrow(() => readDecomposition(p, input, 20, { min_inference_obligations: 1 }));
+});
+
+test('proof premises from earlier obligations cannot omit their explicit DAG edges', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  const p = proposal(); p.obligations[1].internal_dependencies = [];
+  assert.throws(() => readDecomposition(p, input, 20), /explicit dependency edge/);
+});
+
+test('compact decomposition and reports resolve all quotes through the canonical corpus', async (t) => {
+  const f = await fixture(t);
+  const input = await readRecordedPacket(f.recordFile);
+  const p = proposal();
+  Object.assign(p.obligations[0].source_span, { quoted_text: proof.slice(0, proof.indexOf('\n')) });
+  const normalized = readDecomposition(p, input, 20);
+  assert.equal('quoted_text' in normalized.obligations[0].source_span, false);
+  const report = await reviewRecord(f.recordFile, f.policyFile);
+  assert.equal(report.schema_version, 2);
+  const span = report.decomposition!.obligations[0].source_span;
+  assert.equal(report.sources[span.source].slice(span.start, span.end), 'Choose x in the domain.');
+});
+
+test('relocating identical adapters and runtime files does not change the review policy identity', async (t) => {
+  const f = await fixture(t);
+  const other = path.join(f.root, 'relocated');
+  await mkdir(other);
+  await cp(f.adapter, path.join(other, 'adapter.mjs'));
+  const p = structuredClone(f.policy);
+  for (const role of Object.values(p.roles)) role.command[1] = path.join(other, 'adapter.mjs');
+  const policyFile = path.join(other, 'policy.json');
+  await writeFile(policyFile, stableJson(p));
+  assert.equal((await loadPolicy(f.policyFile)).hash, (await loadPolicy(policyFile)).hash);
+});
+
+test('loader arguments and declared runtime directories participate in policy fingerprints', async (t) => {
+  const f = await fixture(t);
+  const loader = path.join(f.root, 'loader.mjs');
+  const runtime = path.join(f.root, 'runtime');
+  await mkdir(runtime);
+  await writeFile(path.join(runtime, 'runtime.js'), 'version 1');
+  await writeFile(loader, '// loader version 1');
+  for (const role of Object.values(f.policy.roles)) {
+    role.command = [process.execPath, '--import', pathToFileURL(loader).href, f.adapter];
+    role.implementation_files = [f.adapter, runtime];
+  }
+  await writeFile(f.policyFile, stableJson(f.policy));
+  const original = (await loadPolicy(f.policyFile)).hash;
+  await writeFile(loader, '// loader version 2');
+  const changedLoader = (await loadPolicy(f.policyFile)).hash;
+  assert.notEqual(original, changedLoader);
+  await writeFile(path.join(runtime, 'runtime.js'), 'version 2');
+  assert.notEqual((await loadPolicy(f.policyFile)).hash, changedLoader);
 });
 
 test('failed structural gate stops before fidelity, with no retries', async (t) => {
@@ -245,6 +358,59 @@ test('explicit semantic uncertainty remains inconclusive after complete structur
   assert.equal(report.metrics.calls, 2);
 });
 
+test('multi-megabyte proof requests carry each corpus entry once and retain auditable offsets', async (t) => {
+  const f = await fixture(t);
+  const marker = 'UNIQUE_LARGE_PROOF_CORPUS_';
+  const large = marker + 'x'.repeat(2 * 1024 * 1024) + '\nThus the claim follows.';
+  f.record.packet.target.proof = large;
+  f.record.packet_hash = sha256(stableJson(f.record.packet, 0));
+  f.record.verification_key = verificationKey(f.record.packet);
+  await writeFile(f.recordFile, stableJson(f.record));
+  const p = proposal();
+  const end = large.indexOf('\n');
+  p.obligations[0].source_span = anchor('target.proof', large, 0, end);
+  p.obligations[0].conclusion = anchor('target.proof', large, 0, end);
+  p.obligations[1].source_span = anchor('target.proof', large, end + 1);
+  p.obligations[1].premises = [anchor('target.proof', large, 0, end)];
+  await writeFile(f.adapter, `process.stdin.setEncoding('utf8');let raw='';for await(const c of process.stdin)raw+=c;const request=JSON.parse(raw);
+if(raw.split(${JSON.stringify(marker)}).length!==2)throw new Error('Duplicate corpus');
+if(Buffer.byteLength(raw)-Buffer.byteLength(request.sources['target.proof'])>16000)throw new Error('Unexpected payload duplication');
+if(request.decomposition && JSON.stringify(request.decomposition).includes(${JSON.stringify(marker)}))throw new Error('Repeated quoted spans');
+process.stdout.write(JSON.stringify({result:request.role==='decomposer'?${JSON.stringify(p)}:${JSON.stringify(faithful())}}));`);
+  const report = await reviewRecord(f.recordFile, f.policyFile);
+  assert.equal(report.stage_status, 'ready_for_proof_review', JSON.stringify(report.structural_issues));
+  assert.equal(report.sources['target.proof'], large);
+  assert.equal(report.decomposition!.obligations[0].source_span.end, end);
+  assert.equal(report.metrics.calls, 2);
+});
+
+test('Codex adapter transports a multi-megabyte Unicode prompt by stdin, never argv', async (t) => {
+  if (process.platform === 'win32') { t.skip('Fake Codex CLI uses a POSIX shebang; Windows pipe/tree tests run separately'); return; }
+  const f = await fixture(t);
+  const fakeCli = path.join(f.root, 'fake-large-codex.mjs');
+  await writeFile(fakeCli, `#!${process.execPath}\nconst args=process.argv.slice(2);
+if(args.at(-1)!=='-' || args.some(x=>Buffer.byteLength(x)>1024))process.exit(8);
+process.stdin.setEncoding('utf8');let prompt='';for await(const c of process.stdin)prompt+=c;
+if(Buffer.byteLength(prompt)<2000000 || prompt.includes('�') || (prompt.match(/∀x∈ℂ🧮/gu)||[]).length!==20000)process.exit(9);
+process.stdout.write(JSON.stringify({large_input_received:true}));`, { mode: 0o700 });
+  const adapter = fileURLToPath(new URL('../tooling/proof-review/codex-adapter.ts', import.meta.url));
+  const loader = new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url).href;
+  const request = JSON.stringify({ schema_version: 2, role: 'decomposer', instructions: 'Return JSON.',
+    context: {}, sources: { 'target.proof': 'x'.repeat(2 * 1024 * 1024) + '∀x∈ℂ🧮'.repeat(20000) }, output_schema: {} });
+  const response = await new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, ['--import', loader, adapter, '--executable', fakeCli], {
+      env: { ...process.env, QMD_PROOF_REVIEW_MODEL: 'mock-only' }, stdio: ['pipe', 'pipe', 'pipe']
+    });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', (data) => { stdout += data; });
+    child.stderr.on('data', (data) => { stderr += data; });
+    child.on('error', reject);
+    child.on('close', (code) => code === 0 ? resolve(stdout) : reject(new Error(stderr)));
+    child.stdin.end(request);
+  });
+  assert.equal(JSON.parse(response).result.large_input_received, true);
+});
+
 test('Codex transport supplies isolated role prompts, explicit models, and usage without a live model', async (t) => {
   const f = await fixture(t);
   const fakeCli = path.join(f.root, 'fake-codex.mjs');
@@ -252,7 +418,8 @@ test('Codex transport supplies isolated role prompts, explicit models, and usage
   if (process.platform === 'win32') { t.skip('Executable wrapper uses a POSIX shebang'); return; }
   await writeFile(fakeCli, `#!${process.execPath}\nconst args=process.argv.slice(2);
 if(args[0]!=='exec' || !args.includes('--sandbox') || !args.includes('read-only') || !args.includes('mock-only')) process.exit(8);
-const prompt=args.at(-1);
+if(args.at(-1)!=='-') process.exit(11);
+let prompt=''; process.stdin.setEncoding('utf8'); for await(const chunk of process.stdin) prompt+=chunk;
 if(prompt.includes('UPSTREAM SECRET PROOF') || prompt.includes('ORIGINAL VERDICT SECRET')) process.exit(9);
 const isFidelity=prompt.includes('Independently compare the proposed decomposition');
 if(isFidelity && !prompt.includes('"decomposition"')) process.exit(10);

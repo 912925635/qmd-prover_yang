@@ -9,14 +9,15 @@ import { DECOMPOSER_PROMPT, FIDELITY_PROMPT, DECOMPOSITION_SCHEMA, FIDELITY_SCHE
 import type { ProofReviewReport, ReviewRequest } from './types.js';
 
 /** Read-only with respect to the project; the caller may save this independent report. */
-export async function reviewRecord(recordFile: string, policyFile: string): Promise<ProofReviewReport> {
+export async function reviewRecord(recordFile: string, policyFile: string, options: { signal?: AbortSignal } = {}): Promise<ProofReviewReport> {
   const start = Date.now();
   const input = await readRecordedPacket(recordFile);
   const loaded = await loadPolicy(policyFile);
   const report: ProofReviewReport = {
-    schema_version: 1, phase: 'decomposition-and-faithfulness', target: input.context.target.id,
+    schema_version: 2, phase: 'decomposition-and-faithfulness', target: input.context.target.id,
     verifier_packet_hash: input.packet_hash, review_policy_hash: loaded.hash, review_policy: loaded.policy,
     source_identity: input.packet.target.identity, applicability: 'recorded-packet-only', current_source_checked: false,
+    sources: input.sources,
     decomposition: null, structural_issues: [], fidelity: null, stage_status: 'inconclusive',
     coverage: { assigned: 0, checked: 0, uncovered: [] }, outcome: 'inconclusive',
     limitations: [
@@ -27,15 +28,17 @@ export async function reviewRecord(recordFile: string, policyFile: string): Prom
     calls: [], metrics: { calls: 0, duration_ms: 0 }
   };
   const request: ReviewRequest = {
-    schema_version: 1, role: 'decomposer', instructions: DECOMPOSER_PROMPT,
-    context: input.context, sources: input.sources, output_schema: DECOMPOSITION_SCHEMA
+    schema_version: 2, role: 'decomposer', instructions: DECOMPOSER_PROMPT,
+    context: input.context, sources: input.sources, output_schema: DECOMPOSITION_SCHEMA,
+    granularity_guard: { min_inference_obligations: loaded.policy.min_inference_obligations!, max_span_paragraphs: loaded.policy.max_span_paragraphs! }
   };
   try {
-    const decompositionCall = await callRole(request, loaded.policy);
+    const decompositionCall = await callRole(request, loaded.policy, options.signal);
     report.calls.push(decompositionCall);
     if (decompositionCall.status !== 'ok') throw new Error(decompositionCall.error);
     try {
-      report.decomposition = readDecomposition(decompositionCall.response, input, loaded.policy.max_obligations);
+      report.decomposition = readDecomposition(decompositionCall.response, input, loaded.policy.max_obligations, loaded.policy);
+      decompositionCall.response = report.decomposition;
     } catch (error) {
       report.stage_status = 'blocked';
       throw error;
@@ -45,10 +48,11 @@ export async function reviewRecord(recordFile: string, policyFile: string): Prom
     const fidelityCall = await callRole({
       ...request, role: 'fidelity', instructions: FIDELITY_PROMPT,
       decomposition: report.decomposition, output_schema: FIDELITY_SCHEMA
-    }, loaded.policy);
+    }, loaded.policy, options.signal);
     report.calls.push(fidelityCall);
     if (fidelityCall.status !== 'ok') throw new Error(fidelityCall.error);
     report.fidelity = readFidelity(fidelityCall.response, report.decomposition, input.sources);
+    fidelityCall.response = report.fidelity;
     report.stage_status = report.fidelity.status === 'pass' ? 'ready_for_proof_review'
       : report.fidelity.status === 'fail' ? 'blocked' : 'inconclusive';
   } catch (error) {
