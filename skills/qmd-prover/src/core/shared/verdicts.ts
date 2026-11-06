@@ -114,6 +114,8 @@ export interface VerifierUsage {
  */
 export interface VerifierMetrics {
   duration_ms: number;
+  /** Execution provenance only; excluded from the packet and mathematical cache key. */
+  attempt_id?: string;
   cached?: boolean;
   usage?: VerifierUsage;
 }

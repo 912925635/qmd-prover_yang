@@ -1,5 +1,10 @@
 # Dispatcher and installation reference
 
+The P0 `workbench sessions`, `workbench sources`, and `workbench render` commands are
+specified in [workbench.md](workbench.md), including all flags, manifests, evidence,
+read-only behavior and explicit model-call boundaries. They preserve the existing
+mathematical protocol and cache keys.
+
 qmd-prover is a command-line tool (installed on the host's `PATH`) with a dependency-free Node
 dispatcher for mathematical proof workflows in Quarto Markdown. Every QMD file in the project is
 semantic mathematics compiled into one unified dependency graph.

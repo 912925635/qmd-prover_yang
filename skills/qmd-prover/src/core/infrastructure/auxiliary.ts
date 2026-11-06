@@ -111,6 +111,7 @@ const GITIGNORE_TEMPLATE = [
   '!/config.yml',
   '!/.external.qmd',
   '!/statement-locks.json',
+  '!/source-bindings.json',
   ''
 ].join('\n');
 

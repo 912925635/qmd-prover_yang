@@ -12,7 +12,7 @@ function node(path) {
         case '':
             return {
                 usage: ['qmd-prover <command> [arguments]', 'qmd-prover help [COMMAND...]'],
-                children: ['doctor', 'version', 'install', 'init', 'inspect', 'dependency', 'check', 'verification', 'render'],
+                children: ['doctor', 'version', 'install', 'init', 'inspect', 'dependency', 'check', 'verification', 'render', 'workbench'],
                 sections: {
                     notes: [
                         'Requirements: Node.js 20+ and Pandoc (via PATH, tools.pandoc, or QMD_PROVER_PANDOC). A verifier (verification.backend claude|codex) and Quarto are optional.',
@@ -234,6 +234,26 @@ function node(path) {
             return { usage: ['qmd-prover verification list'], summary: 'List retained verification records and discover submission IDs.' };
         case 'verification show':
             return { usage: ['qmd-prover verification show SUBMISSION_ID'], summary: 'Read one retained verification record by submission ID.', positional: true };
+        case 'workbench':
+            return { usage: ['qmd-prover workbench <command>'], summary: 'Trace verifier sessions and bind TeX manuscripts without granting mathematical status.', children: ['sessions', 'sources', 'render'] };
+        case 'workbench sessions':
+            return { usage: ['qmd-prover workbench sessions <command>'], children: ['list', 'show', 'resume'] };
+        case 'workbench sessions list':
+            return { usage: ['qmd-prover workbench sessions list [--fact @ID]'], summary: 'Read retained attempts and legacy verification references.' };
+        case 'workbench sessions show':
+            return { usage: ['qmd-prover workbench sessions show ATTEMPT_ID [--source events|rollout]'], summary: 'Read sealed execution events or the matching local native session.', positional: true };
+        case 'workbench sessions resume':
+            return { usage: ['qmd-prover workbench sessions resume ATTEMPT_ID [--launch]'], summary: 'Describe a discussion launch; only --launch starts Codex. It never updates mathematical decisions.', positional: true };
+        case 'workbench sources':
+            return { usage: ['qmd-prover workbench sources <command>'], children: ['bind', 'status', 'review'] };
+        case 'workbench sources bind':
+            return { usage: ['qmd-prover workbench sources bind @ID --manifest FILE'], summary: 'Register explicit TeX anchors and a QMD baseline without claiming alignment.', positional: true };
+        case 'workbench sources status':
+            return { usage: ['qmd-prover workbench sources status [@ID]'], summary: 'Read manuscript freshness and applicable alignment evidence without invoking a model.', positional: true };
+        case 'workbench sources review':
+            return { usage: ['qmd-prover workbench sources review BINDING_ID --evidence FILE', 'qmd-prover workbench sources review BINDING_ID --backend codex --model MODEL [--effort LEVEL] [--executable PATH]'], summary: 'Record human evidence or explicitly call an alignment reviewer; never grants a mathematical verdict.', positional: true };
+        case 'workbench render':
+            return { usage: ['qmd-prover workbench render'], summary: 'Write a local read-only HTML view of sessions and source bindings; invokes no model.' };
         case 'render':
             return {
                 usage: ['qmd-prover render [--allow-errors]'],

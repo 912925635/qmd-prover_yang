@@ -420,7 +420,7 @@ export async function verifyFacts(compilation: Compilation, context: Verificatio
       } else {
         tally.cache_misses += 1;
         tally.verifier_calls += 1;
-        try { ({ report, metrics } = await invokeVerifier(packet, config)); }
+        try { ({ report, metrics } = await invokeVerifier(packet, config, options.write === false ? {} : { root })); }
         catch (error) {
           const failure = verifierFailure(error, result.id);
           failure.failed_target = result.id;
@@ -490,6 +490,7 @@ export async function verifyFacts(compilation: Compilation, context: Verificatio
           accepted: verificationOutcome(report, packet) !== 'rejected',
           report,
           ...(metrics ? { metrics } : {}),
+          ...(metrics?.attempt_id ? { attempt_id: metrics.attempt_id } : {}),
           statement_hash: result.statement_hash,
           proof_hash: result.proof_hash,
           dependency_snapshot: Object.fromEntries(packet.dependencies.map((dependency) => [String(dependency.id), {

@@ -256,6 +256,58 @@ function parseVerification(rest) {
     }
     throw new Error('verification requires the list or show subcommand. Run qmd-prover help verification.');
 }
+function parseWorkbench(rest) {
+    const [group, sub, ...tail] = rest;
+    if (group === 'render' && sub === undefined)
+        return { kind: 'workbench', action: 'render' };
+    if (group === 'sessions' && sub === 'list') {
+        const parsed = optionValues(tail, new Set(['fact']), new Set());
+        if (parsed.positionals.length)
+            throw new Error('sessions list accepts only --fact');
+        return { kind: 'workbench', action: 'sessions-list', fact: optionString(parsed.options.fact) };
+    }
+    if (group === 'sessions' && sub === 'show') {
+        const parsed = optionValues(tail, new Set(['source']), new Set());
+        if (parsed.positionals.length !== 1)
+            throw new Error('sessions show requires an attempt ID');
+        const source = enumOption('source', optionString(parsed.options.source), ['events', 'rollout']) ?? 'events';
+        return { kind: 'workbench', action: 'sessions-show', id: parsed.positionals[0], source: source };
+    }
+    if (group === 'sessions' && sub === 'resume') {
+        const parsed = optionValues(tail, new Set(), new Set(['launch']));
+        if (parsed.positionals.length !== 1)
+            throw new Error('sessions resume requires an attempt ID');
+        return { kind: 'workbench', action: 'sessions-resume', id: parsed.positionals[0], launch: parsed.options.launch === true };
+    }
+    if (group === 'sources' && sub === 'bind') {
+        const parsed = optionValues(tail, new Set(['manifest']), new Set());
+        const manifest = optionString(parsed.options.manifest);
+        if (parsed.positionals.length !== 1 || !manifest)
+            throw new Error('sources bind requires @ID --manifest FILE');
+        return { kind: 'workbench', action: 'sources-bind', id: parsed.positionals[0], manifest };
+    }
+    if (group === 'sources' && sub === 'status') {
+        if (tail.length > 1 || tail.some((value) => value.startsWith('--')))
+            throw new Error('sources status accepts only an optional fact ID');
+        return { kind: 'workbench', action: 'sources-status', fact: tail[0] };
+    }
+    if (group === 'sources' && sub === 'review') {
+        const parsed = optionValues(tail, new Set(['evidence', 'backend', 'model', 'effort', 'executable']), new Set());
+        const settings = Object.fromEntries(Object.entries(parsed.options).map(([key, value]) => [key, String(value)]));
+        if (parsed.positionals.length !== 1)
+            throw new Error('sources review requires a binding ID');
+        if (settings.evidence) {
+            if (Object.keys(settings).length !== 1)
+                throw new Error('--evidence cannot be combined with AI options');
+        }
+        else if (settings.backend !== 'codex' || !settings.model)
+            throw new Error('sources review requires --evidence FILE or --backend codex --model MODEL');
+        if (settings.effort)
+            enumOption('effort', settings.effort, ['low', 'medium', 'high', 'xhigh', 'max']);
+        return { kind: 'workbench', action: 'sources-review', id: parsed.positionals[0], settings };
+    }
+    throw new Error('Run qmd-prover help workbench for supported commands');
+}
 function parseRender(rest) {
     if (rest.some((item) => item !== '--allow-errors') || rest.filter((item) => item === '--allow-errors').length > 1) {
         throw new Error('render accepts only optional --allow-errors');
@@ -283,6 +335,7 @@ export function parseCommand(args) {
         case 'dependency': return parseDependency(rest);
         case 'check': return parseCheck(rest);
         case 'verification': return parseVerification(rest);
+        case 'workbench': return parseWorkbench(rest);
         case 'render': return parseRender(rest);
         default: throw new Error(`Unknown command: ${command}. Run qmd-prover help.`);
     }

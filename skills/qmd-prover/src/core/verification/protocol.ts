@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { executableInvocation } from '../infrastructure/executables.js';
+import { beginAttempt, finishAttempt } from '../workbench/attempts.js';
 import { sha256, stableJson } from '../infrastructure/files.js';
 import { externalPolicyHash, readExternalPolicy } from '../infrastructure/external.js';
 import { asErrorLike, asRecord, isRecord } from '../shared/core.js';
@@ -233,7 +234,8 @@ export function verifierErrorDetails(error: unknown): JsonObject {
     ...(value.exit_code !== undefined ? { exit_code: value.exit_code } : {}),
     ...(value.signal ? { signal: value.signal } : {}),
     ...(value.stderr ? { stderr_excerpt: excerpt(value.stderr) } : {}),
-    ...(value.stdout ? { stdout_excerpt: excerpt(value.stdout) } : {})
+    ...(value.stdout ? { stdout_excerpt: excerpt(value.stdout) } : {}),
+    ...(asRecord(error).attempt_id ? { attempt_id: asRecord(error).attempt_id } : {})
   };
 }
 
@@ -518,7 +520,7 @@ export function verificationOutcome(
 
 interface ProcessResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; duration_ms: number }
 
-function execute(command: string, args: string[], packet: VerifierPacket): Promise<ProcessResult> {
+function execute(command: string, args: string[], packet: VerifierPacket, attemptDirectory?: string): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     const invocation = executableInvocation(command, args);
@@ -526,6 +528,7 @@ function execute(command: string, args: string[], packet: VerifierPacket): Promi
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        QMD_PROVER_ATTEMPT_DIR: attemptDirectory,
         QMD_PROVER_FRESH_CONTEXT: '1',
         QMD_PROVER_VERIFIER_PROTOCOL: String(VERIFIER_PROTOCOL_VERSION)
       }
@@ -557,7 +560,7 @@ function extractUsage(report: unknown): VerifierUsage | undefined {
   return Object.keys(result).length ? result : undefined;
 }
 
-export async function invokeVerifier(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
+async function invokeVerifierRaw(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, attemptDirectory?: string): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
   const executable = verifierCommand(config);
   if (!executable) {
     throw new VerifierError(
@@ -568,7 +571,7 @@ export async function invokeVerifier(packet: VerifierPacket, config: QmdProverCo
 
   let result;
   try {
-    result = await execute(executable.command, executable.args, packet);
+    result = await execute(executable.command, executable.args, packet, attemptDirectory);
   } catch (error) {
     const failure = asErrorLike(error);
     if (failure.code === 'ENOENT') {
@@ -606,4 +609,26 @@ export async function invokeVerifier(packet: VerifierPacket, config: QmdProverCo
     report: normalizeReport(parsed),
     metrics: { duration_ms: result.duration_ms, ...(usage ? { usage } : {}) }
   };
+}
+
+export async function invokeVerifier(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, options: { root?: string } = {}): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
+  if (!options.root) return invokeVerifierRaw(packet, config);
+  const command = verifierCommand(config);
+  const verification = verificationConfig(config);
+  const attempt = await beginAttempt(options.root, { packet }, {
+    kind: 'mathematical', fact_id: packet.target.id, verification_key: verificationKey(packet),
+    packet_hash: sha256(stableJson(packet, 0)), backend: command?.source === 'backend:codex' ? 'codex' : command?.source === 'backend:claude' ? 'claude' : 'command',
+    requested_model: modelFlag(verification) || null, requested_effort: effortFlag(verification) || null,
+    executable: backendExecutable(verification, String(verification.backend || 'command'))
+  });
+  let result: { report: VerifierReport; metrics: VerifierMetrics };
+  try {
+    result = await invokeVerifierRaw(packet, config, attempt.directory);
+  } catch (error) {
+    await finishAttempt(attempt, { error: String(asErrorLike(error).message ?? error), code: asErrorLike(error).code ?? null }, 'failed');
+    if (error instanceof Error) Object.assign(error, { attempt_id: attempt.id });
+    throw error;
+  }
+  await finishAttempt(attempt, { report: result.report, metrics: result.metrics }, 'completed');
+  return { ...result, metrics: { ...result.metrics, attempt_id: attempt.id } };
 }

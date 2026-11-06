@@ -34,6 +34,7 @@ export async function listVerifications(root: string): Promise<OperationResult> 
     target: typeof record.target === 'string' ? record.target : null,
     outcome: typeof record.outcome === 'string' ? record.outcome : typeof record.verdict === 'string' ? record.verdict : null,
     verified_at: typeof record.verified_at === 'string' ? record.verified_at : null,
+    ...(typeof record.attempt_id === 'string' ? { attempt_id: record.attempt_id } : {}),
     file
   })).sort((left, right) => left.submission_id.localeCompare(right.submission_id));
   return { schema_version: SCHEMA_VERSION, operation: 'verification-list', ok: diagnostics.length === 0, submissions, diagnostics };

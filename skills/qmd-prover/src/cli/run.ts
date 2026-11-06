@@ -1,4 +1,5 @@
 import { renderHelp, rootUsage } from './help.js';
+import { runWorkbench } from '../commands/workbench/index.js';
 import { parseCommand } from './parse.js';
 import { inspectFact, inspectPath, inspectProject } from '../commands/inspect/index.js';
 import { analyzeDependencies } from '../commands/dependency/index.js';
@@ -54,6 +55,9 @@ export async function main(
   const options: CliOptions = pandoc ? { pandoc } : {};
   if (PROJECT_COMMANDS.has(command.kind)) await warnCompatibility(root);
   switch (command.kind) {
+    case 'workbench':
+      emit(await runWorkbench(root, command, options), false);
+      return;
     case 'usage':
       process.stdout.write(`${rootUsage}\n`);
       return;

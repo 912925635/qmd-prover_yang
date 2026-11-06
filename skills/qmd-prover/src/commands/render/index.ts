@@ -4,6 +4,7 @@ import { atomicJson, atomicWrite } from '../../core/infrastructure/files.js';
 import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { quartoCommand } from '../../core/infrastructure/config.js';
 import { executableAvailable } from '../../core/infrastructure/executables.js';
+import { renderWorkbench } from '../workbench/index.js';
 import { resolveProjectSnapshot } from '../../core/graph/snapshot.js';
 import { compileProject } from '../../core/semantic/compiler.js';
 import { verificationContext } from '../../core/verification/protocol.js';
@@ -103,9 +104,10 @@ export async function renderProject(root = process.cwd(), options: CompilerOptio
   };
   const layout = auxLayout(root);
   const output = layout.generated;
+  const workbench = await renderWorkbench(root, options);
   await Promise.all([mkdir(output, { recursive: true }), mkdir(layout.reports, { recursive: true })]);
   await Promise.all([
-    atomicWrite(path.join(output, 'proof-status.qmd'), statusQmd(compilation)),
+    atomicWrite(path.join(output, 'proof-status.qmd'), statusQmd(compilation) + '\n[会话追溯与稿件绑定](workbench.html)\n'),
     atomicWrite(path.join(output, 'dependencies.svg'), graphSvg(compilation.graph)),
     atomicJson(layout.reportStatus, { summary: compilation.summary, diagnostics: compilation.diagnostics })
   ]);
@@ -119,6 +121,7 @@ export async function renderProject(root = process.cwd(), options: CompilerOptio
     output: path.relative(root, path.join(output, 'proof-status.qmd')),
     graph_svg: path.relative(root, path.join(output, 'dependencies.svg')),
     report: path.relative(root, layout.reportStatus),
+    workbench: workbench.output,
     ...(quartoAvailable ? { render_command: `${quartoCmd} render` } : {}),
     quarto: {
       available: quartoAvailable,

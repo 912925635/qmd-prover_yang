@@ -555,6 +555,18 @@ Exact semantics for every filter, and the failure behavior of each command, are 
 
 ## Auditing caches and reading verdicts
 
+### Session provenance and manuscript alignment
+
+Use `qmd-prover workbench sessions list/show` to read retained verifier sessions and
+`workbench sources bind/status/review` to bind TeX statements and proofs to QMD.
+Read [references/workbench.md](references/workbench.md) for exact commands and manifests.
+Viewing and status commands invoke no model. Session `resume` only describes a launch
+unless `--launch` is explicit; resumed discussions cannot update mathematical verdicts.
+AI source-alignment review requires an explicit backend and model. Keep manuscript
+alignment, execution state and mathematical verification separate. Never describe a
+matching hash or alignment attestation as a mathematical proof.
+`qmd-prover workbench render` creates the read-only local traceability page.
+
 ```bash
 qmd-prover check staleness            # which cached verdicts no longer apply, and why
 qmd-prover verification list          # discover retained submission IDs
