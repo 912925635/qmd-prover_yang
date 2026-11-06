@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readJson } from './files.js';
-import { auxLayout } from './aux.js';
+import { auxLayout } from './auxiliary.js';
 import { readCanonicalContract, contractVersionIn } from './contract.js';
 import { SCHEMA_VERSION, asRecord, asString } from '../shared/core.js';
 import { VERIFIER_PROTOCOL_VERSION } from '../verification/protocol.js';

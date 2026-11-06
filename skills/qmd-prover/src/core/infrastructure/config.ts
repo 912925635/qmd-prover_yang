@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { auxLayout } from './aux.js';
+import { auxLayout } from './auxiliary.js';
 import { asRecord, asStringArray, hasErrorCode } from '../shared/core.js';
 import type { JsonObject, JsonValue } from '../shared/types.js';
 

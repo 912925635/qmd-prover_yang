@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { atomicJson, atomicWrite } from '../../core/infrastructure/files.js';
-import { auxLayout } from '../../core/infrastructure/aux.js';
+import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { quartoCommand } from '../../core/infrastructure/config.js';
 import { executableAvailable } from '../../core/infrastructure/executables.js';
 import { resolveProjectSnapshot } from '../../core/graph/snapshot.js';

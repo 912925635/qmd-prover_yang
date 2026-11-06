@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { readJson } from '../../core/infrastructure/files.js';
-import { auxLayout } from '../../core/infrastructure/aux.js';
+import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { SCHEMA_VERSION, hasErrorCode } from '../../core/shared/core.js';
 async function verificationRecords(root) {
     const layout = auxLayout(path.resolve(root));

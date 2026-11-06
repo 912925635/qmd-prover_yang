@@ -1,5 +1,11 @@
 # qmd-prover
 
+This fork adds experimental [shadow proof decomposition and faithfulness
+review](docs/designs/proof-review-shadow.md). The checkout-only tooling produces
+separate reports; preparation does not verify a proof or change the upstream
+engine's verdicts. The original project is
+[powergiant/qmd-prover](https://github.com/powergiant/qmd-prover).
+
 qmd-prover is an add-on for your AI coding assistant — **Claude Code** or **Codex** — that helps it
 write and check real mathematics. It sets up a discipline for writing proofs, and then checks that the discipline was followed.
 

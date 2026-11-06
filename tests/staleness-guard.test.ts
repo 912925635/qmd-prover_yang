@@ -56,6 +56,10 @@ test('status projection refuses to write onto bytes that changed after compilati
   const file = path.join(root, 'work.qmd');
   const original = result('lem-projection-guard', 'A guarded claim.', { proofText: 'An argument.' });
   await writeFile(file, original);
+  const previousPandoc = process.env.QMD_PROVER_PANDOC;
+  // Require the explicitly selected parser for the freshness recompile too.
+  // Even a system Pandoc must not hide a dropped CompilerOptions argument.
+  process.env.QMD_PROVER_PANDOC = path.join(root, 'missing-fallback-pandoc');
   process.env.QMD_PROVER_VERIFIER = verifier;
   try {
     // Control: with the bytes untouched, the verdict is projected as a status attribute.
@@ -75,6 +79,8 @@ test('status projection refuses to write onto bytes that changed after compilati
     await writeStatusProjection(compilationBefore, runBefore, options);
     assert.equal(await readFile(file, 'utf8'), edited);
   } finally {
+    if (previousPandoc === undefined) delete process.env.QMD_PROVER_PANDOC;
+    else process.env.QMD_PROVER_PANDOC = previousPandoc;
     delete process.env.QMD_PROVER_VERIFIER;
   }
 });

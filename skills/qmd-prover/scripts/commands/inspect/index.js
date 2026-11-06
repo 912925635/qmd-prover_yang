@@ -1,7 +1,7 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { cleanId, readJson, relativePosix } from '../../core/infrastructure/files.js';
-import { auxLayout } from '../../core/infrastructure/aux.js';
+import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { SCHEMA_VERSION, byId, hasErrorCode } from '../../core/shared/core.js';
 import { adjacency, blockerPaths, subgraph, traverse } from '../../core/graph/algorithms.js';
 import { deriveGraphFindings } from '../../core/graph/findings.js';

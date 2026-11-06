@@ -289,15 +289,36 @@ tools:
 fall back to `PATH`.
 
 **Decide the verifier up front.** As an early step, decide whether proofs will be independently
-checked, and set a backend *before* your first inspection:
+checked, and set a backend *before* your first inspection.
+
+**Local initialization preference: explicit model and effort.** For this skill installation,
+the user-selected default for a new AI-audit project is Codex with `gpt-6.1-sol` and `max`.
+After an authorized initialization, write these values explicitly into that project's
+`.qmd-prover/config.yml` before its first AI inspection; the user need not enter them again.
+An explicit user choice for the current task takes precedence over this preference.
 
 ```yaml
 verification:
-  backend: claude        # or: codex
-  executable: ""         # path to the claude/codex CLI; blank uses PATH
-  model: ""              # "" lets the CLI use its own default model
-  effort: high           # low | medium | high | xhigh | max
+  backend: codex
+  executable: ""         # path to the codex CLI; blank uses PATH
+  model: gpt-6.1-sol
+  effort: max
 ```
+
+This is a skill-guided project setup preference, not an engine-wide default or an instruction
+to initialize projects without authorization. The engine's scaffold still defaults to
+`backend: none`, `model: ""`, and `effort: high`; an empty model inherits the selected CLI's
+default and therefore does not pin a model.
+
+For an existing project, read and reuse its configuration instead of reinitializing it.
+Preserve a different explicitly chosen project profile; surface any difference from the
+requested profile before AI inspection rather than silently running it or overwriting it.
+For an authorized AI audit with unset model/effort, apply the profile above unless the user
+has chosen another one. A deliberately machine-only project remains machine-only until AI
+auditing is authorized. Before the first AI call, confirm the effective backend, model and
+effort, including any `QMD_PROVER_VERIFIER` override, and state them to the user. If the selected
+model or effort cannot be used, report the failure; do not silently fall back to a default
+model or lower effort.
 
 qmd-prover ships the `claude` and `codex` adapters, so no external verifier script is needed. The
 selected CLI must be installed and authenticated. Re-run `doctor` until the verifier reads

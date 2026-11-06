@@ -1,5 +1,5 @@
 import { readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout } from '../infrastructure/aux.js';
+import { auxLayout } from '../infrastructure/auxiliary.js';
 import { verificationOutcome, verifierErrorDetails } from './protocol.js';
 import { asErrorLike, asRecord, asStringArray, hasErrorCode, isRecord } from '../shared/core.js';
 import type { JsonObject, UnknownRecord } from '../shared/types.js';
