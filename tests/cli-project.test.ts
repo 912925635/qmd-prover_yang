@@ -321,7 +321,7 @@ test('skill requires a once-per-context versioned project contract preflight', a
   assert.match(contract, /An absent file permits external mathematics/);
   assert.match(contract, /a whitespace-only file permits none/);
   assert.match(contract, /<!-- qmd-prover-contract:end -->/);
-  assert.match(contract, /qmd-prover:\n  imports:/);
+  assert.match(contract, /qmd-prover:\r?\n  imports:/);
   assert.match(contract, /export="<same-ID>"/);
   assert.match(contract, /`from` is relative to the consumer/);
   assert.match(contract, /\| `\.definition` \| `def-\*` \|/);
@@ -344,7 +344,7 @@ test('skill requires a once-per-context versioned project contract preflight', a
   for (const status of ['abandoned', 'broken', 'open', 'rejected', 'unverified', 'blocked', 'verified', 'disproved']) {
     assert.match(contract, new RegExp(`\\\`${status}\\\``), `contract must name the ${status} status`);
   }
-  assert.match(contract, /```bash\nqmd-prover init\n```/);
+  assert.match(contract, /```bash\r?\nqmd-prover init\r?\n```/);
   assert.match(contract, /workspace\/` folder/);
   assert.match(contract, /never a semantic boundary/);
   assert.match(contract, /globally unique across the project/);

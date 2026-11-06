@@ -1,5 +1,6 @@
 /** Optional Codex CLI transport. Uses the same exec flags as the shipped verifier. */
 import { spawn } from 'node:child_process';
+import { executableInvocation } from '../../skills/qmd-prover/src/core/infrastructure/executables.js';
 import { object, text } from './packet.js';
 
 async function main(): Promise<void> {
@@ -26,7 +27,8 @@ async function main(): Promise<void> {
   // Verified against codex-cli 0.159.2 `exec --help`: '-' reads the prompt from stdin.
   commandArgs.push('--sandbox', 'read-only', '--skip-git-repo-check', '-');
   const response = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(executable, commandArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const invocation = executableInvocation(executable, commandArgs);
+    const child = spawn(invocation.command, invocation.args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = ''; let bytes = 0;
     const collect = (chunk: string, stream: 'stdout' | 'stderr'): void => {
       bytes += Buffer.byteLength(chunk);

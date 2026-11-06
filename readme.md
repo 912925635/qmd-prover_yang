@@ -405,6 +405,13 @@ npm run typecheck
 npm test        # AST-producing Pandoc adapter + mock verifiers; no real Pandoc or credentials needed
 ```
 
+On Windows, the build also compiles the checkout-only Shadow Review Job helper
+with the system .NET Framework 4.x C# compiler. It writes the helper to
+`%LOCALAPPDATA%/qmd-prover/shadow-runtime/<source-sha256>/windows-job.exe`;
+Linux builds do not need this helper or a C# compiler. The Windows launcher uses
+native argv and a kill-on-close Job Object without changing PowerShell execution
+policy. Paths and Node-based test adapters support both Windows and POSIX hosts.
+
 `npm install -g .` (or `npm link`) installs the `qmd-prover` engine on the `PATH`; `qmd-prover
 install [--global] [--codex]` then copies the docs-only skill into the assistant's skills directory.
 From a checkout without installing the engine, `tsx tooling/install-skill.ts [--local|--global]

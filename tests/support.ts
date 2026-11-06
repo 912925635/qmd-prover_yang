@@ -1,8 +1,9 @@
 import { chmod, mkdtemp, mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export const here = path.dirname(new URL(import.meta.url).pathname);
+export const here = path.dirname(fileURLToPath(import.meta.url));
 export const fakePandoc = path.join(here, '.generated-fixtures', 'fake-pandoc.js');
 export const verifier = path.join(here, '.generated-fixtures', 'mock-verifier.js');
 export const staleVerifier = path.join(here, '.generated-fixtures', 'stale-verifier.js');
@@ -14,7 +15,7 @@ export function must<T>(value: T | null | undefined, message = 'Expected value t
   return value;
 }
 
-process.env.PATH = `${path.dirname(process.execPath)}:${process.env.PATH}`;
+process.env.PATH = `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ''}`;
 
 export async function project() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'qmd-prover-'));

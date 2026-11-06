@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { executableInvocation } from '../infrastructure/executables.js';
 import { sha256, stableJson } from '../infrastructure/files.js';
 import { externalPolicyHash, readExternalPolicy } from '../infrastructure/external.js';
 import { asErrorLike, asRecord, isRecord } from '../shared/core.js';
@@ -424,7 +425,8 @@ export function verificationOutcome(report, packetOrMode) {
 function execute(command, args, packet) {
     return new Promise((resolve, reject) => {
         const start = Date.now();
-        const child = spawn(command, args, {
+        const invocation = executableInvocation(command, args);
+        const child = spawn(invocation.command, invocation.args, {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: {
                 ...process.env,

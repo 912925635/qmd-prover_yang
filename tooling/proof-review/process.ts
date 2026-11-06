@@ -1,11 +1,19 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function windowsSupervisor(): { command: string; args: string[] } {
+  // Build locally under AppData: a checkout on an Internet-zone drive may run
+  // binaries at low integrity or reject unsigned scripts. Do not change that policy.
+  const source = readFileSync(new URL('./windows-job.cs', import.meta.url));
+  const identity = createHash('sha256').update(source).digest('hex');
+  const local = process.env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local');
   return {
-    command: path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    args: ['-NoProfile', '-NonInteractive', '-File', fileURLToPath(new URL('./windows-job.ps1', import.meta.url))]
+    command: path.join(local, 'qmd-prover', 'shadow-runtime', identity, 'windows-job.exe'),
+    args: []
   };
 }
 
@@ -21,6 +29,7 @@ export function executeRole(command: string[], input: string, options: {
       cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'], detached: !windows, windowsHide: true
     });
     const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
     let bytes = 0;
     let failure: Error | null = null;
     let stopped = false;
@@ -51,13 +60,14 @@ export function executeRole(command: string[], input: string, options: {
     child.stderr.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > options.max_output_bytes) stop('Role output exceeded policy limit');
+      else errors.push(chunk);
     });
     child.on('error', (error) => { failure ??= error; });
     child.on('close', (code) => {
       cleanListeners();
       terminate();
       if (failure) reject(failure);
-      else if (code !== 0) reject(new Error(`Role process exited with code ${code}`));
+      else if (code !== 0) reject(new Error(`Role process exited with code ${code}: ${Buffer.concat(errors).toString('utf8').trim()}`));
       else resolve(Buffer.concat(chunks).toString('utf8'));
     });
     child.stdin.on('error', (error: NodeJS.ErrnoException) => {

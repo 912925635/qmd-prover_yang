@@ -255,7 +255,9 @@ test('large project fixture exposes a missing cross-file import as a mechanical 
   const { root, workspace } = await materializeLargeProject();
   const calculus = path.join(workspace, 'calculus.qmd');
   const source = await readFile(calculus, 'utf8');
-  await writeFile(calculus, source.replace('        - lem-substitution-composition\n', ''));
+  const edited = source.replace(/^ {8}- lem-substitution-composition\r?\n/mu, '');
+  assert.notEqual(edited, source, 'The fixture must remove the cross-file import');
+  await writeFile(calculus, edited);
 
   process.env.QMD_PROVER_VERIFIER = verifier;
   try {

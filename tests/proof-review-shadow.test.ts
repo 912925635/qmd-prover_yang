@@ -385,7 +385,6 @@ process.stdout.write(JSON.stringify({result:request.role==='decomposer'?${JSON.s
 });
 
 test('Codex adapter transports a multi-megabyte Unicode prompt by stdin, never argv', async (t) => {
-  if (process.platform === 'win32') { t.skip('Fake Codex CLI uses a POSIX shebang; Windows pipe/tree tests run separately'); return; }
   const f = await fixture(t);
   const fakeCli = path.join(f.root, 'fake-large-codex.mjs');
   await writeFile(fakeCli, `#!${process.execPath}\nconst args=process.argv.slice(2);
@@ -415,7 +414,6 @@ test('Codex transport supplies isolated role prompts, explicit models, and usage
   const f = await fixture(t);
   const fakeCli = path.join(f.root, 'fake-codex.mjs');
   // A fake executable receives the same argv as the installed Codex CLI.
-  if (process.platform === 'win32') { t.skip('Executable wrapper uses a POSIX shebang'); return; }
   await writeFile(fakeCli, `#!${process.execPath}\nconst args=process.argv.slice(2);
 if(args[0]!=='exec' || !args.includes('--sandbox') || !args.includes('read-only') || !args.includes('mock-only')) process.exit(8);
 if(args.at(-1)!=='-') process.exit(11);

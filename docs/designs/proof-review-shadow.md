@@ -86,10 +86,20 @@ The request contains role-specific instructions and `output_schema` descriptions
 define the actual schema. `QMD_PROOF_REVIEW_MODEL` carries the configured model;
 `QMD_PROOF_REVIEW_FRESH_CONTEXT=1` requires stateless handling. Implementations
 must honor these settings. On POSIX the argv is spawned directly. On Windows a
-private PowerShell Job supervisor launches the same native argv through
+private compiled C# Job supervisor launches the same native argv through
 `ProcessStartInfo` with `UseShellExecute=false`; no role command is interpreted
 as shell text. Relative command arguments are
 resolved in a fresh temporary directory, so use absolute adapter paths.
+
+On Windows, `npm ci` / `npm run build` compiles `windows-job.cs` with the
+system .NET Framework 4.x C# compiler. The helper is built under
+`%LOCALAPPDATA%/qmd-prover/shadow-runtime/<source-sha256>/windows-job.exe`,
+using the current user's local application-data directory when `LOCALAPPDATA`
+is unset. This keeps the locally built runtime separate from checkouts on
+Internet-zone drives. No PowerShell script, execution-policy override, or
+machine security-setting change is needed. Missing compiler/runtime support
+fails the build or launch; there is no uncontained fallback. The helper's binary
+contents participate in the Windows review-policy fingerprint.
 
 ## Gates and reporting
 
@@ -208,8 +218,9 @@ AbortSignal, normal exit and Unicode pipe/argv behavior. On Windows run:
 node --import tsx --test tests/proof-review-process.test.ts
 ```
 
-The local workflow includes a Windows job for this command; adding the workflow
-does not mean it has run. Linux tests validate the POSIX branch only.
+The workflow runs the full suite on both Ubuntu and Windows, plus a dedicated
+Windows process test job. Workflow configuration alone is not execution evidence.
+Linux tests validate the POSIX branch only.
 Mocks deliberately represent an unsupported proof faithfully, demonstrating
 that a fidelity pass does not certify its mathematics.
 

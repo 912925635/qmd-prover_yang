@@ -13,7 +13,7 @@
     "skills/qmd-prover/SKILL.md"
   ],
   "scripts": {
-    "build": "tsc --project tsconfig.build.json",
+    "build": "tsc --project tsconfig.build.json && node --import tsx tooling/build-windows-supervisor.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
     "test": "npm run build && tsc --project tsconfig.fixtures.json && node --import tsx --test tests/*.test.ts",
     "prepare": "npm run build",

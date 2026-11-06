@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { executableInvocation } from '../infrastructure/executables.js';
 import { asArray, asErrorLike, asRecord, asString, isRecord } from '../shared/core.js';
 function collect(child, input) {
     return new Promise((resolve, reject) => {
@@ -30,7 +31,8 @@ const READER_FORMAT = 'markdown+fenced_divs+citations+tex_math_single_backslash'
 export async function readAst(file, { pandoc = process.env.QMD_PROVER_PANDOC || 'pandoc' } = {}) {
     let result;
     try {
-        result = await collect(spawn(pandoc, [`--from=${READER_FORMAT}`, '--to=json', file], { stdio: ['ignore', 'pipe', 'pipe'] }));
+        const invocation = executableInvocation(pandoc, [`--from=${READER_FORMAT}`, '--to=json', file]);
+        result = await collect(spawn(invocation.command, invocation.args, { stdio: ['ignore', 'pipe', 'pipe'] }));
     }
     catch (error) {
         if (asErrorLike(error).code === 'ENOENT') {
