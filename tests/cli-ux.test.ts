@@ -78,9 +78,10 @@ test('install places the docs-only skill in the cwd project and reports activati
   assert.equal(outcome.operation, 'install-skill');
   assert.equal(outcome.scope, 'local');
   // Runs in the cwd, so a bare (local) install targets that project — not the qmd-prover repo.
-  // realpath resolves the macOS /var -> /private/var symlink that process.cwd() reports.
-  const realRoot = await import('node:fs/promises').then((fs) => fs.realpath(root));
-  assert.equal(outcome.destination, path.join(realRoot, '.claude', 'skills', 'qmd-prover'));
+  // Compare actual directories, resolving macOS symlinks and Windows 8.3 path aliases.
+  const { realpath } = await import('node:fs/promises');
+  const expectedDestination = path.join(root, '.claude', 'skills', 'qmd-prover');
+  assert.equal(await realpath(outcome.destination), await realpath(expectedDestination));
 
   const entries = await import('node:fs/promises').then((fs) => fs.readdir(outcome.destination));
   assert.ok(entries.includes('SKILL.md'), 'skill docs copied');
