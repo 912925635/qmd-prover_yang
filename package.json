@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json && node --import tsx tooling/build-windows-supervisor.mjs",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "npm run build && tsc --project tsconfig.fixtures.json && node --import tsx --test tests/*.test.ts",
+    "test": "npm run build && tsc --project tsconfig.fixtures.json && node tooling/run-tests.mjs",
     "prepare": "npm run build",
     "install:tool": "npm install --global .",
     "install:dev": "npm run build && npm link"
