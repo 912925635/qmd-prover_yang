@@ -36,12 +36,18 @@ export async function installSkill(options: SkillInstallOptions): Promise<string
   const destination = skillDestination(options);
   const source = path.resolve(options.source);
   // The engine ships as the `qmd-prover` command, not inside the skill.
-  const engineDirs = new Set([path.join(source, 'src'), path.join(source, 'scripts')]);
+  // Windows Node 20 may pass extended-length paths to cp's filter.
+  // Normalize both sides before comparing so those directories remain excluded.
+  const comparisonPath = (value: string): string => {
+    const normalized = path.toNamespacedPath(path.resolve(value));
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  const engineDirs = new Set([path.join(source, 'src'), path.join(source, 'scripts')].map(comparisonPath));
   await mkdir(path.dirname(destination), { recursive: true });
   await rm(destination, { recursive: true, force: true });
   await cp(source, destination, {
     recursive: true,
-    filter: (from) => !engineDirs.has(path.resolve(from))
+    filter: (from) => !engineDirs.has(comparisonPath(from))
   });
   return destination;
 }
