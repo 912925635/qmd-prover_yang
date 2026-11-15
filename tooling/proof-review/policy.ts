@@ -85,7 +85,7 @@ export async function loadPolicy(file: string): Promise<LoadedPolicy> {
   };
   if (policy.min_inference_obligations! > policy.max_obligations) throw new Error('min_inference_obligations exceeds max_obligations');
   const modules = ['types', 'packet', 'prompts', 'decomposition', 'faithfulness', 'policy', 'roles', 'process', 'review', 'report', 'cli', 'codex-adapter'];
-  const implementation = await Promise.all([...modules.map((name) => `${name}.ts`), 'windows-job.cs',
+  const implementation = await Promise.all([...modules.map((name) => `${name}.ts`), '../../skills/qmd-prover/src/core/infrastructure/windows-job.cs',
     '../../skills/qmd-prover/src/core/infrastructure/executables.ts'].map(async (name) => ({
     name, hash: sha256(await readFile(new URL(`./${name}`, import.meta.url)))
   })));

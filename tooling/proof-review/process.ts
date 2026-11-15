@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 export function windowsSupervisor(): { command: string; args: string[] } {
   // Build locally under AppData: a checkout on an Internet-zone drive may run
   // binaries at low integrity or reject unsigned scripts. Do not change that policy.
-  const source = readFileSync(new URL('./windows-job.cs', import.meta.url));
+  const source = readFileSync(new URL('../../skills/qmd-prover/src/core/infrastructure/windows-job.cs', import.meta.url));
   const identity = createHash('sha256').update(source).digest('hex');
   const local = process.env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local');
   return {

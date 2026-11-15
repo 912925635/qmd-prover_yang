@@ -71,9 +71,9 @@ function statusQmd(compilation: Compilation): string {
 
 export async function renderProject(root = process.cwd(), options: CompilerOptions & RenderOptions = {}): Promise<RenderResult> {
   root = path.resolve(root);
-  const compiled = await compileProject(root, options);
+  const compiled = await compileProject(root, { ...options, write: false });
   const context = await verificationContext(compiled);
-  const snapshot = await resolveProjectSnapshot(compiled, context.contextHash, options);
+  const snapshot = await resolveProjectSnapshot(compiled, context.contextHash, { ...options, write: false });
   const compilation: Compilation = {
     root,
     config: compiled.config,

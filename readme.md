@@ -397,17 +397,21 @@ examples/                a worked example project
 The `bin` in `package.json` maps the `qmd-prover` command to `skills/qmd-prover/scripts/qmd-prover.js`,
 so `npm install -g .` (or `npm link`, which is equivalent here) puts it on the `PATH`.
 
-## Session provenance and manuscript alignment
+## Proof review workbench
 
-The P0 workbench records Codex session IDs and execution events alongside verification
+The workbench records Codex session IDs and execution events alongside verification
 records. It can bind TeX labels or byte spans to QMD facts, detect source drift, and retain
-separate human or explicitly requested AI alignment evidence. Session metadata does not
-change mathematical cache keys; manuscript alignment does not grant mathematical verdicts.
+separate human or explicitly requested AI alignment evidence. It also provides frozen
+verification plans, a local 1–3 worker queue, retained attempt history, task control and
+read-only usage reports. Session metadata does not change mathematical cache keys;
+manuscript alignment does not grant mathematical verdicts.
 See the [workbench command guide](skills/qmd-prover/references/workbench.md).
 
 ```powershell
 qmd-prover workbench sessions list
 qmd-prover workbench sources status
+qmd-prover workbench jobs plan project --save review-plan.json
+qmd-prover workbench jobs run review-plan.json --jobs 2
 qmd-prover workbench render
 ```
 

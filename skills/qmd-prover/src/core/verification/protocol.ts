@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { executableInvocation } from '../infrastructure/executables.js';
+import { runManaged } from '../infrastructure/process.js';
 import { beginAttempt, finishAttempt } from '../workbench/attempts.js';
 import { sha256, stableJson } from '../infrastructure/files.js';
 import { externalPolicyHash, readExternalPolicy } from '../infrastructure/external.js';
@@ -458,7 +458,7 @@ function stringField(report: JsonObject, field: string): string {
   return report[field];
 }
 
-function normalizeReport(value: unknown): VerifierReport {
+export function normalizeReport(value: unknown): VerifierReport {
   if (!isRecord(value)) {
     throw new VerifierError('schema', 'Verifier output must be a JSON object');
   }
@@ -520,31 +520,15 @@ export function verificationOutcome(
 
 interface ProcessResult { code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; duration_ms: number }
 
-function execute(command: string, args: string[], packet: VerifierPacket, attemptDirectory?: string): Promise<ProcessResult> {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    const invocation = executableInvocation(command, args);
-    const child = spawn(invocation.command, invocation.args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: {
+function execute(command: string, args: string[], packet: VerifierPacket, attemptDirectory?: string, signal?: AbortSignal): Promise<ProcessResult> {
+  const invocation = executableInvocation(command, args);
+  return runManaged(invocation.command, invocation.args, `${JSON.stringify(packet)}\n`, {
+      signal, env: {
         ...process.env,
         QMD_PROVER_ATTEMPT_DIR: attemptDirectory,
         QMD_PROVER_FRESH_CONTEXT: '1',
         QMD_PROVER_VERIFIER_PROTOCOL: String(VERIFIER_PROTOCOL_VERSION)
       }
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr, duration_ms: Date.now() - start }));
-    child.stdin.on('error', (error) => {
-      if (asErrorLike(error).code !== 'EPIPE') reject(error);
-    });
-    child.stdin.end(`${JSON.stringify(packet)}\n`);
   });
 }
 
@@ -560,7 +544,7 @@ function extractUsage(report: unknown): VerifierUsage | undefined {
   return Object.keys(result).length ? result : undefined;
 }
 
-async function invokeVerifierRaw(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, attemptDirectory?: string): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
+async function invokeVerifierRaw(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, attemptDirectory?: string, signal?: AbortSignal): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
   const executable = verifierCommand(config);
   if (!executable) {
     throw new VerifierError(
@@ -571,9 +555,10 @@ async function invokeVerifierRaw(packet: VerifierPacket, config: QmdProverConfig
 
   let result;
   try {
-    result = await execute(executable.command, executable.args, packet, attemptDirectory);
+    result = await execute(executable.command, executable.args, packet, attemptDirectory, signal);
   } catch (error) {
     const failure = asErrorLike(error);
+    if (signal?.aborted) throw new VerifierError('cancelled', 'Verifier process was cancelled after descendant cleanup');
     if (failure.code === 'ENOENT') {
       throw new VerifierError('not-found', `Verifier executable not found: ${executable.command}`, {
         command: executable.command
@@ -611,24 +596,28 @@ async function invokeVerifierRaw(packet: VerifierPacket, config: QmdProverConfig
   };
 }
 
-export async function invokeVerifier(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, options: { root?: string } = {}): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
-  if (!options.root) return invokeVerifierRaw(packet, config);
+export async function invokeVerifier(packet: VerifierPacket, config: QmdProverConfig | JsonObject = {}, options: { root?: string; signal?: AbortSignal; runId?: string; sourceSignature?: string } = {}): Promise<{ report: VerifierReport; metrics: VerifierMetrics }> {
+  if (!options.root) return invokeVerifierRaw(packet, config, undefined, options.signal);
   const command = verifierCommand(config);
   const verification = verificationConfig(config);
   const attempt = await beginAttempt(options.root, { packet }, {
     kind: 'mathematical', fact_id: packet.target.id, verification_key: verificationKey(packet),
+    ...(options.runId ? { run_id: options.runId } : {}),
+    ...(options.sourceSignature ? { source_signature: options.sourceSignature } : {}),
     packet_hash: sha256(stableJson(packet, 0)), backend: command?.source === 'backend:codex' ? 'codex' : command?.source === 'backend:claude' ? 'claude' : 'command',
     requested_model: modelFlag(verification) || null, requested_effort: effortFlag(verification) || null,
     executable: backendExecutable(verification, String(verification.backend || 'command'))
   });
   let result: { report: VerifierReport; metrics: VerifierMetrics };
   try {
-    result = await invokeVerifierRaw(packet, config, attempt.directory);
+    result = await invokeVerifierRaw(packet, config, attempt.directory, options.signal);
   } catch (error) {
-    await finishAttempt(attempt, { error: String(asErrorLike(error).message ?? error), code: asErrorLike(error).code ?? null }, 'failed');
+    await finishAttempt(attempt, { error: String(asErrorLike(error).message ?? error), code: asErrorLike(error).code ?? null }, options.signal?.aborted ? 'cancelled' : 'failed');
     if (error instanceof Error) Object.assign(error, { attempt_id: attempt.id });
     throw error;
   }
   await finishAttempt(attempt, { report: result.report, metrics: result.metrics }, 'completed');
+  // Deterministic process-crash injection for the sealed-before-cache recovery test.
+  if (process.env.QMD_PROVER_TEST_CRASH_AFTER_SEAL === '1') process.kill(process.pid, 'SIGKILL');
   return { ...result, metrics: { ...result.metrics, attempt_id: attempt.id } };
 }

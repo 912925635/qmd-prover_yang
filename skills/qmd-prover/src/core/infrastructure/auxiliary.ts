@@ -2,6 +2,7 @@ import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AUX, hasErrorCode } from '../shared/core.js';
 import { atomicJson, atomicWrite, exists } from './files.js';
+import { withCoordinator } from '../workbench/coordinator.js';
 import type { JsonObject } from '../shared/types.js';
 
 export { AUX } from '../shared/core.js';
@@ -153,6 +154,7 @@ export async function appendEvent(root: string, event: JsonObject): Promise<void
 }
 
 export async function withWriteLock<T>(root: string, operation: () => Promise<T>, { timeoutMs = 5000 }: { timeoutMs?: number } = {}): Promise<T> {
+  return withCoordinator(root, 'canonical-write', async () => {
   const lock = auxLayout(root).writeLock;
   await mkdir(path.dirname(lock), { recursive: true });
   const started = Date.now();
@@ -168,4 +170,5 @@ export async function withWriteLock<T>(root: string, operation: () => Promise<T>
     }
   }
   try { return await operation(); } finally { await rm(lock, { recursive: true, force: true }); }
+  });
 }

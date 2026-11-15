@@ -4,6 +4,8 @@ import { compileProject, factErrors, factIntent, hasCheckableContent } from '../
 import { externalPolicyHash } from '../infrastructure/external.js';
 import { atomicJson, atomicWrite, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
 import { auxLayout } from '../infrastructure/auxiliary.js';
+import { withWriteLock } from '../infrastructure/auxiliary.js';
+import { assertCoordinator, withCoordinator } from '../workbench/coordinator.js';
 import { findDiv, findProofs, locateDivs, readLocatedBlock, readLocatedProof, setStatusAttribute } from '../semantic/source.js';
 import { buildVerifierPacket, checkerContract, configured, invokeVerifier, verificationContext, verificationKey, verificationOutcome } from '../verification/protocol.js';
 import { cachedDecision, verifierFailure } from '../verification/cache.js';
@@ -54,6 +56,77 @@ export function topologicalOrder(results) {
     const seen = new Set(ordered.map((result) => result.id));
     ordered.push(...results.filter((result) => !seen.has(result.id)).sort((left, right) => left.id.localeCompare(right.id)));
     return ordered;
+}
+/** Construct the exact local conditional packet without dependency proofs or verification states. */
+export async function buildFactPacket(compilation, context, result, locatedBlock) {
+    const root = compilation.root;
+    const config = compilation.config;
+    const externalBasis = context.externalBasis;
+    const resultById = new Map(compilation.manifest.results.map((item) => [item.id, item]));
+    const located = locatedBlock ?? (async (item) => {
+        const value = await readLocatedBlock(path.join(root, item.file), item.id);
+        if (!value)
+            throw Object.assign(new Error(`Source block for @${item.id} disappeared during packet preparation`), { code: 'SOURCE_STALE' });
+        return value;
+    });
+    const block = await located(result);
+    const statement = blockText(block.statement?.text);
+    const proof = await (async () => {
+        if (result.proof_file && result.proof_file !== result.file) {
+            const proofBlock = await readLocatedProof(path.join(root, result.proof_file), result.id);
+            if (!proofBlock)
+                throw Object.assign(new Error(`Linked proof of @${result.id} disappeared during inspection`), { code: 'SOURCE_STALE' });
+            return blockText(proofBlock.proof?.text);
+        }
+        return blockText(block.proof?.text);
+    })();
+    const dependencies = await (async () => {
+        const collected = [];
+        for (const dependency of [...new Set(result.dependencies)].sort()) {
+            const dependencyResult = resultById.get(dependency);
+            // Unresolved @IDs are rejected mechanically. Permitted outside mathematics
+            // is supplied only through externalBasis, never as an implicit graph fact.
+            if (!dependencyResult)
+                continue;
+            const dependencyBlock = await located(dependencyResult);
+            const dependencyStatement = blockText(dependencyBlock.statement?.text);
+            collected.push({
+                id: dependency,
+                kind: dependencyResult.kind,
+                title: dependencyResult.title,
+                statement: dependencyStatement,
+                origin: dependencyResult.origin === 'user' ? 'main-goal' : 'fact',
+                identity: {
+                    statement_hash: dependencyResult.statement_hash
+                },
+                source: { file: dependencyResult.file }
+            });
+        }
+        return collected;
+    })();
+    // The definition entries in `dependencies` are the semantic context (see reviewPrompt);
+    // scope states the frontier as a flat id list rather than re-embedding those bodies.
+    const scope = {
+        type: 'local-conditional-check',
+        source_file: result.file,
+        direct_dependency_ids: dependencies.map((dependency) => dependency.id)
+    };
+    return buildVerifierPacket({
+        target: {
+            id: result.id,
+            kind: result.kind,
+            title: result.title,
+            ...(result.kind === 'definition' ? { construction: statement } : { statement }),
+            proof,
+            identity: { statement_hash: result.statement_hash, proof_hash: result.proof_hash },
+            source: { file: result.file },
+            verification_mode: result.refutation ? 'refutation' : result.kind === 'definition' ? 'definition-construction' : 'proof'
+        },
+        dependencies,
+        externalBasis,
+        scope,
+        config
+    });
 }
 /**
  * Machine analysis, local conditional verification, and global composition for the
@@ -209,12 +282,19 @@ export async function verifyFacts(compilation, context, options = {}) {
             verifier_calls: 0,
             cache_hits: 0,
             cache_misses: 0,
+            recovered_attempts: 0,
             unusable_cache_entries: 0,
             verifier_duration_ms: 0,
             verifier_tokens: 0,
+            verifier_usage_unknown_attempts: 0,
             stopped_after: null
         };
         let fatal = null;
+        const abort = new AbortController();
+        const onAbort = () => abort.abort();
+        options.signal?.addEventListener('abort', onAbort, { once: true });
+        if (options.signal?.aborted)
+            abort.abort();
         const initialSourceSignature = projectSourceSignature(compilation, context.contextHash);
         // Source blocks read for the verifier packets, memoised for this stage only.
         const locatedBlocks = new Map();
@@ -229,6 +309,7 @@ export async function verifyFacts(compilation, context, options = {}) {
             locatedBlocks.set(key, value);
             return value;
         };
+        const prepared = [];
         for (const result of topologicalOrder(results)) {
             // A fact the author has not made checkable, or that is malformed, never reaches the verifier —
             // whether or not this run selected it. Its reason decides `open` vs `broken` vs `abandoned`.
@@ -249,66 +330,7 @@ export async function verifyFacts(compilation, context, options = {}) {
             }
             let packet;
             try {
-                packet = await (async () => {
-                    const block = await located(result);
-                    const statement = blockText(block.statement?.text);
-                    const proof = await (async () => {
-                        if (result.proof_file && result.proof_file !== result.file) {
-                            const proofBlock = await readLocatedProof(path.join(root, result.proof_file), result.id);
-                            if (!proofBlock)
-                                throw Object.assign(new Error(`Linked proof of @${result.id} disappeared during inspection`), { code: 'SOURCE_STALE' });
-                            return blockText(proofBlock.proof?.text);
-                        }
-                        return blockText(block.proof?.text);
-                    })();
-                    const dependencies = await (async () => {
-                        const collected = [];
-                        for (const dependency of [...new Set(result.dependencies)].sort()) {
-                            const dependencyResult = resultById.get(dependency);
-                            // Unresolved @IDs are rejected mechanically. Permitted outside mathematics
-                            // is supplied only through externalBasis, never as an implicit graph fact.
-                            if (!dependencyResult)
-                                continue;
-                            const dependencyBlock = await located(dependencyResult);
-                            const dependencyStatement = blockText(dependencyBlock.statement?.text);
-                            collected.push({
-                                id: dependency,
-                                kind: dependencyResult.kind,
-                                title: dependencyResult.title,
-                                statement: dependencyStatement,
-                                origin: dependencyResult.origin === 'user' ? 'main-goal' : 'fact',
-                                identity: {
-                                    statement_hash: dependencyResult.statement_hash
-                                },
-                                source: { file: dependencyResult.file }
-                            });
-                        }
-                        return collected;
-                    })();
-                    // The definition entries in `dependencies` are the semantic context (see reviewPrompt);
-                    // scope states the frontier as a flat id list rather than re-embedding those bodies.
-                    const scope = {
-                        type: 'local-conditional-check',
-                        source_file: result.file,
-                        direct_dependency_ids: dependencies.map((dependency) => dependency.id)
-                    };
-                    return buildVerifierPacket({
-                        target: {
-                            id: result.id,
-                            kind: result.kind,
-                            title: result.title,
-                            ...(result.kind === 'definition' ? { construction: statement } : { statement }),
-                            proof,
-                            identity: { statement_hash: result.statement_hash, proof_hash: result.proof_hash },
-                            source: { file: result.file },
-                            verification_mode: result.refutation ? 'refutation' : result.kind === 'definition' ? 'definition-construction' : 'proof'
-                        },
-                        dependencies,
-                        externalBasis,
-                        scope,
-                        config
-                    });
-                })();
+                packet = await buildFactPacket(compilation, context, result, located);
             }
             catch (error) {
                 const failure = verifierFailure(error, result.id);
@@ -320,152 +342,225 @@ export async function verifyFacts(compilation, context, options = {}) {
                 outcomes.set(result.id, failure);
                 continue;
             }
-            const key = verificationKey(packet);
-            const cached = await cachedDecision(root, result.id, key, packet);
-            if (cached.invalid)
-                tally.unusable_cache_entries += 1;
-            let report;
-            let source;
-            let cachedResult = false;
-            let metrics;
-            if (cached.record) {
-                report = cached.record.report;
-                source = 'verification-cache';
-                cachedResult = true;
-                tally.cache_hits += 1;
-                // Surface the originally-recorded cost, flagged as cached (this run did no verifier work).
-                const recorded = cached.record.metrics;
-                metrics = recorded ? { ...recorded, cached: true } : { duration_ms: 0, cached: true };
-            }
-            else if (fatal) {
-                outcomes.set(result.id, fatal.failed_target
-                    ? verifierFailure(fatal, fatal.failed_target, true)
-                    : { ...fatal, inherited: true });
-                continue;
-            }
-            else {
-                tally.cache_misses += 1;
-                tally.verifier_calls += 1;
-                try {
-                    ({ report, metrics } = await invokeVerifier(packet, config, options.write === false ? {} : { root }));
-                }
-                catch (error) {
-                    const failure = verifierFailure(error, result.id);
-                    failure.failed_target = result.id;
-                    const now = new Date().toISOString();
-                    const failureFile = auxLayout(root).failure(key, now.replace(/[-:.TZ]/g, ''));
-                    try {
-                        await atomicJson(failureFile, {
-                            schema_version: 1,
-                            operation: 'local-conditional-verification-failed',
-                            target: result.id,
-                            failed_at: now,
-                            verification_key: key,
-                            checker_contract: checkerContract(config),
-                            error: failure.details ?? { code: failure.code, message: failure.error },
-                            remediation: failure.remediation
-                        });
-                        failure.failure_report = relativePosix(root, failureFile);
-                    }
-                    catch { /* The structured command error remains the primary result. */ }
-                    fatal = failure;
-                    outcomes.set(result.id, failure);
-                    tally.stopped_after = result.id;
-                    continue;
-                }
-                // The call happened whether or not its verdict survives the freshness check below, so its
-                // cost is tallied first; a discarded verdict must not read back as "the verifier never ran".
-                if (metrics) {
-                    tally.verifier_duration_ms += metrics.duration_ms;
-                    tally.verifier_tokens += metrics.usage?.total_tokens ?? 0;
-                }
-                // Freshness: the verdict is only trustworthy if the sources it judged are still the sources
-                // on disk. A failed recompile proves nothing about the sources, so it is reported as its own
-                // infrastructure failure — never as SOURCE_STALE.
-                let drift = null;
-                let recompileFailure = null;
-                try {
-                    const currentCompilation = await compileProject(root, { ...options, write: false });
-                    const currentContext = await verificationContext(currentCompilation);
-                    if (projectSourceSignature(currentCompilation, currentContext.contextHash) !== initialSourceSignature) {
-                        drift = describeSourceDrift(compilation, context.contextHash, currentCompilation, currentContext.contextHash)
-                            ?? 'project sources changed in an unclassified way';
-                    }
-                }
-                catch (error) {
-                    recompileFailure = String(asErrorLike(error).message ?? error);
-                }
-                if (recompileFailure) {
-                    fatal = verifierFailure(Object.assign(new Error(`Could not confirm project sources were unchanged while @${result.id} was being checked: the freshness recompile failed (${recompileFailure}). The verdict was discarded unrecorded; this is an infrastructure failure, not evidence that sources changed`), { code: 'FRESHNESS_CHECK_FAILED' }), result.id);
-                    fatal.failed_target = result.id;
-                    outcomes.set(result.id, fatal);
-                    tally.stopped_after = result.id;
-                    continue;
-                }
-                if (drift) {
-                    fatal = verifierFailure(Object.assign(new Error(`Project sources or verification context changed while @${result.id} was being checked: ${drift}`), { code: 'SOURCE_STALE' }), result.id);
-                    fatal.failed_target = result.id;
-                    outcomes.set(result.id, fatal);
-                    tally.stopped_after = result.id;
-                    continue;
-                }
-                const record = {
-                    schema_version: SCHEMA_VERSION,
-                    operation: 'local-conditional-verification',
-                    target: result.id,
-                    verified_at: new Date().toISOString(),
-                    outcome: verificationOutcome(report, packet),
-                    accepted: verificationOutcome(report, packet) !== 'rejected',
-                    report,
-                    ...(metrics ? { metrics } : {}),
-                    ...(metrics?.attempt_id ? { attempt_id: metrics.attempt_id } : {}),
-                    statement_hash: result.statement_hash,
-                    proof_hash: result.proof_hash,
-                    dependency_snapshot: Object.fromEntries(packet.dependencies.map((dependency) => [String(dependency.id), {
-                            origin: dependency.origin,
-                            identity: dependency.identity
-                        }])),
-                    scope: packet.scope,
-                    external_basis_hash: externalPolicyHash(externalBasis),
-                    checker_contract: checkerContract(config),
-                    verification_key: key,
-                    packet_hash: sha256(stableJson(packet, 0)),
-                    packet
-                };
-                try {
-                    await atomicJson(cached.location.file, record);
-                }
-                catch (error) {
-                    fatal = verifierFailure(Object.assign(new Error(`Verifier result for @${result.id} could not be cached safely: ${asErrorLike(error).message}`), { code: 'CACHE_WRITE_FAILED' }), result.id);
-                    fatal.failed_target = result.id;
-                    outcomes.set(result.id, fatal);
-                    tally.stopped_after = result.id;
-                    continue;
-                }
-                source = 'independent-verifier';
-            }
-            const decision = verificationOutcome(report, packet);
-            const outcome = {
-                status: decision,
-                source,
-                cached: cachedResult,
-                verification_key: key,
-                report,
-                ...(metrics ? { metrics } : {})
-            };
-            outcomes.set(result.id, outcome);
-            if (decision === 'disproved') {
-                result.disproof = {
-                    status: 'conditional',
-                    summary: report.summary,
-                    refutation: report.refutation,
-                    source: 'local-verifier-evidence',
-                    verification_key: key
-                };
-            }
-            else
-                delete result.disproof;
+            prepared.push({ result, packet });
         }
+        let next = 0;
+        await options.onFrozenPackets?.(prepared.map(({ result, packet }) => ({ fact_id: result.id, packet_hash: sha256(stableJson(packet, 0)) })));
+        const worker = async () => {
+            while (next < prepared.length) {
+                const item = prepared[next++];
+                const { result, packet } = item;
+                const key = verificationKey(packet);
+                const recovered = options.recoveredReports?.[result.id];
+                if (recovered && (recovered.packet_hash !== sha256(stableJson(packet, 0)) || recovered.verification_key !== key)) {
+                    throw new Error(`Recovered attempt input changed for @${result.id}`);
+                }
+                const cached = await cachedDecision(root, result.id, key, packet);
+                const preserveCache = (failure) => cached.record ? {
+                    status: verificationOutcome(cached.record.report, packet), source: 'verification-cache', cached: true,
+                    verification_key: key, report: cached.record.report,
+                    latest_execution_error: { code: failure.code, message: failure.error,
+                        attempt_id: typeof failure.details?.attempt_id === 'string' ? failure.details.attempt_id : null }
+                } : failure;
+                if (cached.invalid)
+                    tally.unusable_cache_entries += 1;
+                let report;
+                let source;
+                let cachedResult = false;
+                let metrics;
+                if (cached.record && ((!options.recheck && !recovered) || (recovered && cached.record.attempt_id === recovered.attempt_id))) {
+                    await options.onTaskEvent?.(result.id, 'reused');
+                    report = cached.record.report;
+                    source = 'verification-cache';
+                    cachedResult = true;
+                    tally.cache_hits += 1;
+                    // Surface the originally-recorded cost, flagged as cached (this run did no verifier work).
+                    const recorded = cached.record.metrics;
+                    metrics = recorded ? { ...recorded, cached: true } : { duration_ms: 0, cached: true };
+                }
+                else if (fatal) {
+                    outcomes.set(result.id, preserveCache(fatal.failed_target
+                        ? verifierFailure(fatal, fatal.failed_target, true)
+                        : { ...fatal, inherited: true }));
+                    continue;
+                }
+                else {
+                    if (abort.signal.aborted || !recovered && options.beforeDispatch && !(await options.beforeDispatch())) {
+                        await options.onTaskEvent?.(result.id, 'cancelled');
+                        const cancelled = verifierFailure(Object.assign(new Error('Run cancelled before dispatch'), { code: 'RUN_CANCELLED' }), result.id);
+                        cancelled.failed_target = result.id;
+                        fatal = cancelled;
+                        outcomes.set(result.id, preserveCache(cancelled));
+                        tally.stopped_after = result.id;
+                        continue;
+                    }
+                    if (recovered)
+                        tally.recovered_attempts += 1;
+                    else {
+                        tally.cache_misses += 1;
+                        tally.verifier_calls += 1;
+                        await options.onTaskEvent?.(result.id, 'running');
+                    }
+                    try {
+                        ({ report, metrics } = recovered
+                            ? { report: recovered.report, metrics: { ...recovered.metrics, attempt_id: recovered.attempt_id } }
+                            : await invokeVerifier(packet, config, options.write === false ? { signal: abort.signal } : { root, signal: abort.signal, runId: options.runId, sourceSignature: initialSourceSignature }));
+                    }
+                    catch (error) {
+                        tally.verifier_usage_unknown_attempts += 1;
+                        await options.onTaskEvent?.(result.id, abort.signal.aborted ? 'cancelled' : 'failed');
+                        const priorFailure = fatal;
+                        if (priorFailure) {
+                            outcomes.set(result.id, preserveCache(verifierFailure(priorFailure, priorFailure.failed_target ?? result.id, true)));
+                            continue;
+                        }
+                        const failure = verifierFailure(error, result.id);
+                        failure.failed_target = result.id;
+                        const now = new Date().toISOString();
+                        const failureFile = auxLayout(root).failure(key, now.replace(/[-:.TZ]/g, ''));
+                        try {
+                            await atomicJson(failureFile, {
+                                schema_version: 1,
+                                operation: 'local-conditional-verification-failed',
+                                target: result.id,
+                                failed_at: now,
+                                verification_key: key,
+                                checker_contract: checkerContract(config),
+                                error: failure.details ?? { code: failure.code, message: failure.error },
+                                remediation: failure.remediation
+                            });
+                            failure.failure_report = relativePosix(root, failureFile);
+                        }
+                        catch { /* The structured command error remains the primary result. */ }
+                        fatal = failure;
+                        abort.abort();
+                        outcomes.set(result.id, preserveCache(failure));
+                        tally.stopped_after = result.id;
+                        continue;
+                    }
+                    await options.onTaskEvent?.(result.id, 'completed');
+                    // The call happened whether or not its verdict survives the freshness check below, so its
+                    // cost is tallied first; a discarded verdict must not read back as "the verifier never ran".
+                    if (metrics && !recovered) {
+                        tally.verifier_duration_ms += metrics.duration_ms;
+                        if (typeof metrics.usage?.total_tokens === 'number')
+                            tally.verifier_tokens += metrics.usage.total_tokens;
+                        else
+                            tally.verifier_usage_unknown_attempts += 1;
+                    }
+                    // Freshness: the verdict is only trustworthy if the sources it judged are still the sources
+                    // on disk. A failed recompile proves nothing about the sources, so it is reported as its own
+                    // infrastructure failure — never as SOURCE_STALE.
+                    let drift = null;
+                    let recompileFailure = null;
+                    try {
+                        const currentCompilation = await compileProject(root, { ...options, write: false });
+                        const currentContext = await verificationContext(currentCompilation);
+                        if (projectSourceSignature(currentCompilation, currentContext.contextHash) !== initialSourceSignature) {
+                            drift = describeSourceDrift(compilation, context.contextHash, currentCompilation, currentContext.contextHash)
+                                ?? 'project sources changed in an unclassified way';
+                        }
+                    }
+                    catch (error) {
+                        recompileFailure = String(asErrorLike(error).message ?? error);
+                    }
+                    if (recompileFailure) {
+                        fatal = verifierFailure(Object.assign(new Error(`Could not confirm project sources were unchanged while @${result.id} was being checked: the freshness recompile failed (${recompileFailure}). The verdict was discarded unrecorded; this is an infrastructure failure, not evidence that sources changed`), { code: 'FRESHNESS_CHECK_FAILED' }), result.id);
+                        fatal.failed_target = result.id;
+                        abort.abort();
+                        outcomes.set(result.id, preserveCache(fatal));
+                        tally.stopped_after = result.id;
+                        continue;
+                    }
+                    if (drift) {
+                        fatal = verifierFailure(Object.assign(new Error(`Project sources or verification context changed while @${result.id} was being checked: ${drift}`), { code: 'SOURCE_STALE' }), result.id);
+                        fatal.failed_target = result.id;
+                        abort.abort();
+                        outcomes.set(result.id, preserveCache(fatal));
+                        tally.stopped_after = result.id;
+                        continue;
+                    }
+                    const priorFailure = fatal;
+                    if (priorFailure) {
+                        outcomes.set(result.id, preserveCache(verifierFailure(priorFailure, priorFailure.failed_target ?? result.id, true)));
+                        continue;
+                    }
+                    const record = {
+                        schema_version: SCHEMA_VERSION,
+                        operation: 'local-conditional-verification',
+                        target: result.id,
+                        verified_at: new Date().toISOString(),
+                        outcome: verificationOutcome(report, packet),
+                        accepted: verificationOutcome(report, packet) !== 'rejected',
+                        report,
+                        ...(metrics ? { metrics } : {}),
+                        ...(metrics?.attempt_id ? { attempt_id: metrics.attempt_id } : {}),
+                        statement_hash: result.statement_hash,
+                        proof_hash: result.proof_hash,
+                        dependency_snapshot: Object.fromEntries(packet.dependencies.map((dependency) => [String(dependency.id), {
+                                origin: dependency.origin,
+                                identity: dependency.identity
+                            }])),
+                        scope: packet.scope,
+                        external_basis_hash: externalPolicyHash(externalBasis),
+                        checker_contract: checkerContract(config),
+                        verification_key: key,
+                        packet_hash: sha256(stableJson(packet, 0)),
+                        packet
+                    };
+                    try {
+                        if (options.write !== false)
+                            await withWriteLock(root, async () => {
+                                const latest = await compileProject(root, { ...options, write: false });
+                                const latestContext = await verificationContext(latest);
+                                if (projectSourceSignature(latest, latestContext.contextHash) !== initialSourceSignature) {
+                                    throw Object.assign(new Error('Project sources changed before cache commit'), { code: 'SOURCE_STALE' });
+                                }
+                                await assertCoordinator(root);
+                                await atomicJson(cached.location.file, record);
+                            });
+                    }
+                    catch (error) {
+                        fatal = verifierFailure(Object.assign(new Error(`Verifier result for @${result.id} could not be cached safely: ${asErrorLike(error).message}`), { code: asErrorLike(error).code === 'SOURCE_STALE' ? 'SOURCE_STALE' : 'CACHE_WRITE_FAILED' }), result.id);
+                        fatal.failed_target = result.id;
+                        abort.abort();
+                        outcomes.set(result.id, preserveCache(fatal));
+                        tally.stopped_after = result.id;
+                        continue;
+                    }
+                    source = recovered ? 'sealed-attempt' : 'independent-verifier';
+                }
+                const decision = verificationOutcome(report, packet);
+                const outcome = {
+                    status: decision,
+                    source,
+                    cached: cachedResult,
+                    verification_key: key,
+                    report,
+                    ...(metrics ? { metrics } : {})
+                };
+                outcomes.set(result.id, outcome);
+                if (decision === 'disproved') {
+                    result.disproof = {
+                        status: 'conditional',
+                        summary: report.summary,
+                        refutation: report.refutation,
+                        source: 'local-verifier-evidence',
+                        verification_key: key
+                    };
+                }
+                else
+                    delete result.disproof;
+            }
+        };
+        const jobs = options.jobs ?? 1;
+        if (!Number.isInteger(jobs) || jobs < 1 || jobs > 3)
+            throw new Error('jobs must be an integer from 1 to 3');
+        const workers = await Promise.allSettled(Array.from({ length: Math.min(jobs, prepared.length) }, () => worker()));
+        const rejected = workers.find((item) => item.status === 'rejected');
+        if (rejected)
+            throw rejected.reason;
+        options.signal?.removeEventListener('abort', onAbort);
         return { outcomes, tally };
     })();
     const outcomes = localVerification.outcomes;
@@ -493,6 +588,12 @@ export async function verifyFacts(compilation, context, options = {}) {
                     message: `Local conditional verification could not check @${result.id}: ${outcome.error}`,
                     file: result.file, line: result.proof_line ?? result.line, id: result.id,
                     remediation: outcome.remediation
+                });
+            if (outcome.latest_execution_error)
+                items.push({
+                    severity: 'error', code: outcome.latest_execution_error.code ?? 'AI_RECHECK_FAILED',
+                    message: `Fresh recheck of @${result.id} failed; the displayed mathematical decision is the older applicable cache result: ${outcome.latest_execution_error.message ?? 'unknown execution error'}`,
+                    file: result.file, line: result.proof_line ?? result.line, id: result.id
                 });
         }
         return items;
@@ -630,18 +731,11 @@ export async function verifyFacts(compilation, context, options = {}) {
 function projectedStatus(outcome) {
     return outcome.status === 'not-run' ? null : outcome.status;
 }
-/**
- * Project each freshly checked fact's local verdict into a display-only `status` attribute on its
- * source div — the linked proof div for a theorem-like result, the result div for a definition.
- * The attribute is excluded from every content hash, the verifier packet, the cache key, and the
- * snapshot identity, and is never read back, so writing it can never invalidate a cached decision.
- * Only facts re-checked this run (`run.selected`) are touched; a fact not conclusively checked has
- * any prior status cleared. A no-op when write mode is off.
- */
-export async function writeStatusProjection(compilation, run, options = {}) {
+async function writeStatusProjectionOwned(compilation, run, options = {}) {
     if (options.write === false)
-        return;
+        return [];
     const root = compilation.root;
+    const issues = [];
     const resultById = new Map(compilation.manifest.results.map((result) => [result.id, result]));
     const factById = new Map(run.facts.map((fact) => [fact.id, fact]));
     const perFact = [];
@@ -655,20 +749,24 @@ export async function writeStatusProjection(compilation, run, options = {}) {
         perFact.push({ file, kind: result.kind, id, proofLine: result.proof_line, status: projectedStatus(fact.local_verification) });
     }
     for (const file of new Set(perFact.map((entry) => entry.file))) {
+        await assertCoordinator(root);
         const absolute = path.join(root, file);
         let source;
         try {
             source = await readFile(absolute, 'utf8');
         }
-        catch {
+        catch (error) {
+            issues.push({ file, reason: `source-read-failed: ${String(error)}` });
             continue;
         }
         // Compare-and-swap guard: project a verdict only onto the exact bytes this run compiled and
         // verified. If the file changed underneath the inspection — a concurrent edit, however it
         // happened — writing anything based on this run would stamp a verdict onto content it never
         // judged, or clobber the newer edit. Authored mathematics always outranks a display attribute.
-        if (compilation.sourceHashes[file] !== sha256(source))
+        if (compilation.sourceHashes[file] !== sha256(source)) {
+            issues.push({ file, reason: 'source-bytes-changed' });
             continue;
+        }
         const edits = [];
         // Every fact in this file searches the same div list, so scan the source once for all of them.
         const divs = locateDivs(source);
@@ -690,7 +788,24 @@ export async function writeStatusProjection(compilation, run, options = {}) {
         for (const { div, status } of edits.sort((left, right) => right.div.start - left.div.start)) {
             next = setStatusAttribute(next, div, status);
         }
-        if (next !== source)
-            await atomicWrite(absolute, next);
+        if (next !== source) {
+            await assertCoordinator(root);
+            try {
+                if (await readFile(absolute, 'utf8') !== source) {
+                    issues.push({ file, reason: 'source-bytes-changed-before-replace' });
+                    continue;
+                }
+                await atomicWrite(absolute, next);
+            }
+            catch (error) {
+                issues.push({ file, reason: `projection-write-failed: ${String(error)}` });
+            }
+        }
     }
+    return issues;
+}
+export async function writeStatusProjection(compilation, run, options = {}) {
+    if (options.write === false)
+        return [];
+    return withCoordinator(compilation.root, 'status-projection', () => writeStatusProjectionOwned(compilation, run, options));
 }

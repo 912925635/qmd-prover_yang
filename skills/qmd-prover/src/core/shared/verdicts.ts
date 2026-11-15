@@ -86,6 +86,8 @@ export interface LocalVerification {
     [key: string]: unknown;
   };
   inherited?: boolean;
+  /** A fresh recheck failed while an older, still applicable cache decision remains selected. */
+  latest_execution_error?: { code?: string; message?: string; attempt_id?: string | null };
   /** Run cost of the check that produced this outcome (a fresh call; 0-work for a cache hit). */
   metrics?: VerifierMetrics;
 }

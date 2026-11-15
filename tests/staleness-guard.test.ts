@@ -76,7 +76,8 @@ test('status projection refuses to write onto bytes that changed after compilati
     const runBefore = await verifyFacts(compilationBefore, contextBefore, options);
     const edited = original.replace('An argument.', 'A rewritten argument.');
     await writeFile(file, edited);
-    await writeStatusProjection(compilationBefore, runBefore, options);
+    const issues = await writeStatusProjection(compilationBefore, runBefore, options);
+    assert.deepEqual(issues, [{ file: 'work.qmd', reason: 'source-bytes-changed' }]);
     assert.equal(await readFile(file, 'utf8'), edited);
   } finally {
     if (previousPandoc === undefined) delete process.env.QMD_PROVER_PANDOC;

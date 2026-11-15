@@ -26,8 +26,7 @@ Missing, ambiguous or unsupported records fail explicitly. No authentication fil
 discussion; it may incur model usage but cannot import discussion answers into mathematical
 caches. The original host, CODEX_HOME and working directory must be available.
 Ordinary inspection still prefers valid caches: a hit creates no attempt or session.
-Old records remain legacy/unavailable; missing IDs are not invented. The P1 job queue,
-cross-model comparison and `jobs ... --recheck` are not implemented by these commands.
+Old records remain legacy/unavailable; missing IDs are not invented.
 
 Windows supports native executables and Node entrypoints. Standard global npm Codex
 wrappers are resolved to the adjacent Node launcher without shell evaluation. Other
@@ -131,6 +130,106 @@ the mathematical model or effort does not change the alignment hash.
 Raw file changes, including outside the bound span or line-ending changes, make the old
 evidence stale. Manuscript states do not clear mathematical caches.
 
+## Plan and run local checks
+
+Planning reads the current project and constructs the exact local conditional packets. It
+does not call a verifier. Save a plan explicitly before running it:
+
+```powershell
+qmd-prover workbench jobs plan project --save review-plan.json
+qmd-prover workbench jobs plan fact @lem-example --save review-plan.json
+qmd-prover workbench jobs run review-plan.json --jobs 2
+qmd-prover workbench jobs status RUN_ID
+```
+
+`--jobs` defaults to 1 and accepts at most 3. `run` checks the saved source signature,
+checker contract, selected closure and every frozen packet before dispatch. It stops if
+these no longer match. Direct dependency statements are conditional inputs even when an
+upstream proof is unverified or rejected; dependency proofs and verification status are
+not sent. The published graph still uses the ordinary deterministic global composition.
+Background jobs do not write `status` attributes into QMD. Synchronous `inspect` keeps
+its existing display projection and reports skipped writes in `projection_issues` when
+source bytes changed or the projection write failed. Such a failure does not reverse a
+published mathematical snapshot.
+
+A valid cache makes a normal run invoke no model. For a fresh independent attempt on
+the same mathematical input, explicitly request:
+
+```powershell
+qmd-prover workbench jobs run review-plan.json --recheck
+```
+
+This preserves the old attempt and mathematical key. If the fresh call fails, an
+applicable cached mathematical decision remains visible with its prior source, while
+the new execution failure is reported separately.
+
+An active local run can be paused, resumed or cancelled from another terminal:
+
+```powershell
+qmd-prover workbench jobs pause RUN_ID
+qmd-prover workbench jobs resume RUN_ID
+qmd-prover workbench jobs cancel RUN_ID
+qmd-prover workbench watch RUN_ID
+```
+
+Pause prevents new dispatch and lets active calls finish. Cancel waits for process
+cleanup and returns a cleanup acknowledgement; killing the local process cannot prove
+remote billing stopped. `watch` streams read-only JSON lines only when state changes.
+After a controller crash, status reports `orphaned`. On the original host, first check
+that the old process is gone, then recover its owner and resume the run:
+
+```powershell
+qmd-prover workbench jobs recover --reason "controller crashed"
+qmd-prover workbench jobs resume RUN_ID
+```
+
+Resume rechecks the frozen plan, source, owner record and published generation. It
+reuses a completed sealed attempt only when its hashes, exact packet, key and report
+validate; queued tasks may then run. A dispatched task without a unique valid seal
+is never automatically resent. Resolve its outcome before explicitly requesting:
+
+```powershell
+qmd-prover workbench jobs retry TASK_ID
+```
+
+Retry is an explicit new attempt against a newly prepared current plan. Recovery refuses
+a live or foreign host owner. The owner protocol is for one host and a local filesystem;
+it does not provide a distributed lock across network mounts.
+
+## History and usage
+
+```powershell
+qmd-prover workbench history fact @lem-example
+qmd-prover workbench history compare ATTEMPT_A ATTEMPT_B
+qmd-prover workbench costs RUN_ID
+qmd-prover workbench costs RUN_ID --rates rates.json
+```
+
+History and comparison are read-only. Comparison names input and contract differences;
+an opinion absent from a later report is not automatically resolved. Old cache records
+without session provenance remain legacy records. Costs show a sum of reported token
+fields and the number of attempts with unknown usage. Cache reuse adds no new call.
+Amount estimates require a user supplied rate table with an explicit source, date,
+currency and per-model rates. For example:
+
+```json
+{
+  "source": "User supplied pricing record",
+  "as_of": "2026-11-14",
+  "currency": "USD",
+  "models": {
+    "model-id": {
+      "input_per_million": 1,
+      "cached_input_per_million": 0.5,
+      "output_per_million": 2
+    }
+  }
+}
+```
+
+These numbers are an illustrative file format, not current prices. An attempt with an
+unpriced model or missing usage leaves the estimate incomplete.
+
 ## Read-only report
 
 ```powershell
@@ -138,7 +237,7 @@ qmd-prover workbench render
 ```
 
 This writes .qmd-prover/generated/workbench.html and execution detail pages. The existing
-render command also links to the workbench. Mathematical status comes from a current
-published snapshot; execution and alignment are displayed separately. Native-session
-viewing and discussion commands are separate terminal actions. Static HTML does not
-launch apps, run models or implement the future queue controls.
+render command also links to the workbench. The static view shows task execution, commit,
+math and manuscript states separately. Mathematical status comes from a current
+published snapshot. Native-session viewing and discussion commands are separate terminal
+actions. Static HTML does not launch apps, run models or control jobs.

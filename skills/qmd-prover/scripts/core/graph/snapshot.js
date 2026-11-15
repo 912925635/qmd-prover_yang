@@ -1,6 +1,12 @@
 import path from 'node:path';
-import { atomicJson, readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
-import { auxLayout, scaffoldAuxGitignore } from '../infrastructure/auxiliary.js';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { atomicJson, exists, readJson, relativePosix, sha256, stableJson } from '../infrastructure/files.js';
+import { auxLayout, scaffoldAuxGitignore, withWriteLock } from '../infrastructure/auxiliary.js';
+import { assertCoordinator, withCoordinator } from '../workbench/coordinator.js';
+import { workbenchRoot } from '../workbench/attempts.js';
+import { compileProject } from '../semantic/compiler.js';
+import { verificationContext } from '../verification/protocol.js';
 import { SCHEMA_VERSION } from '../shared/core.js';
 // A graph node is a topology-plus-status view. The verbose per-fact detail
 // (verifier reasons/reports, statement and proof hashes) lives in the manifest
@@ -139,21 +145,49 @@ export async function publishProjectSnapshot(compilation, snapshot, options = {}
     if (options.write === false || !compilation.complete)
         return false;
     const root = compilation.root;
-    await scaffoldAuxGitignore(root);
-    const layout = auxLayout(root);
-    const snapshotFile = layout.snapshot(snapshot.snapshot_id);
-    await Promise.all([
-        atomicJson(snapshotFile, snapshot),
-        atomicJson(layout.manifest, snapshot.manifest),
-        atomicJson(layout.graph, snapshot.graph),
-        atomicJson(layout.diagnostics, snapshot.diagnostics)
-    ]);
-    await atomicJson(layout.graphsLatest, {
-        schema_version: SCHEMA_VERSION,
-        snapshot_id: snapshot.snapshot_id,
-        file: relativePosix(root, snapshotFile)
-    });
-    return true;
+    return withCoordinator(root, 'publish-snapshot', async () => withWriteLock(root, async () => {
+        const fresh = async () => {
+            const current = await compileProject(root, { ...options, write: false });
+            const context = await verificationContext(current);
+            return projectSourceSignature(current, context.contextHash) === snapshot.source_signature;
+        };
+        await assertCoordinator(root);
+        if (!(await fresh()))
+            return false;
+        await scaffoldAuxGitignore(root);
+        const layout = auxLayout(root);
+        const commitId = randomUUID();
+        const snapshotFile = path.join(layout.graphs, 'generations', `${commitId}.json`);
+        const previous = await readJson(layout.graphsLatest, {});
+        const journalFile = path.join(workbenchRoot(root), 'commits', commitId, 'journal.json');
+        const journal = { schema_version: 1, commit_id: commitId, source_signature: snapshot.source_signature,
+            previous_snapshot_id: previous.snapshot_id ?? null, snapshot_id: snapshot.snapshot_id,
+            snapshot_hash: sha256(stableJson(snapshot)),
+            output_hashes: { manifest: sha256(stableJson(snapshot.manifest)), graph: sha256(stableJson(snapshot.graph)), diagnostics: sha256(stableJson(snapshot.diagnostics)) },
+            state: 'prepared' };
+        await atomicJson(journalFile, journal);
+        if (await exists(snapshotFile)) {
+            if ((await readFile(snapshotFile, 'utf8')) !== stableJson(snapshot))
+                throw new Error('An immutable snapshot generation has conflicting content');
+        }
+        else
+            await atomicJson(snapshotFile, snapshot);
+        await Promise.all([
+            atomicJson(layout.manifest, snapshot.manifest),
+            atomicJson(layout.graph, snapshot.graph),
+            atomicJson(layout.diagnostics, snapshot.diagnostics)
+        ]);
+        await assertCoordinator(root);
+        if (!(await fresh())) {
+            await atomicJson(journalFile, { ...journal, state: 'discarded-stale' });
+            return false;
+        }
+        await atomicJson(layout.graphsLatest, {
+            schema_version: SCHEMA_VERSION, snapshot_id: snapshot.snapshot_id, file: relativePosix(root, snapshotFile), commit_id: commitId
+        });
+        await atomicJson(journalFile, { ...journal, state: 'published' });
+        return true;
+    }));
 }
 /** Read the published snapshot when it is still current for the compilation's sources. */
 export async function readPublishedSnapshot(compilation, contextHash) {

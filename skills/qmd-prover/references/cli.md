@@ -1,6 +1,7 @@
 # Dispatcher and installation reference
 
-The P0 `workbench sessions`, `workbench sources`, and `workbench render` commands are
+The `workbench sessions`, `workbench sources`, `workbench jobs`, `workbench history`,
+`workbench costs`, `workbench watch`, and `workbench render` commands are
 specified in [workbench.md](workbench.md), including all flags, manifests, evidence,
 read-only behavior and explicit model-call boundaries. They preserve the existing
 mathematical protocol and cache keys.

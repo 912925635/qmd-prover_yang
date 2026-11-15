@@ -1,16 +1,19 @@
 import { spawn } from 'node:child_process';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, readdir } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 import { atomicWrite } from '../../core/infrastructure/files.js';
 import { auxLayout } from '../../core/infrastructure/auxiliary.js';
-import { listAttempts, readAttempt, readRollout, codexHome, UUID } from '../../core/workbench/attempts.js';
+import { listAttempts, readAttempt, readRollout, codexHome, UUID, workbenchRoot } from '../../core/workbench/attempts.js';
 import { bindSource, sourceStatus, reviewSource } from '../../core/workbench/bindings.js';
+import { factHistory, compareAttempts, costs } from '../../core/workbench/history.js';
+import { planJobs, runJobs, jobStatus, controlJob, resumeJob, retryTask } from '../../core/workbench/jobs.js';
+import { recoverCoordinator } from '../../core/workbench/coordinator.js';
 import { codexInvocation } from '../../verifiers/codex-events.js';
 import { listVerifications } from '../verification/index.js';
 import { compileProject } from '../../core/semantic/compiler.js';
 import { verificationContext } from '../../core/verification/protocol.js';
-import { readPublishedSnapshot } from '../../core/graph/snapshot.js';
+import { readPublishedSnapshot, projectSourceSignature } from '../../core/graph/snapshot.js';
 import type { JsonObject, OperationResult, CompilerOptions } from '../../core/shared/types.js';
 import type { Command } from '../../cli/parse.js';
 
@@ -63,6 +66,7 @@ export async function renderWorkbench(root: string, options: CompilerOptions = {
   const compiled = await compileProject(root, { ...options, write: false });
   const context = await verificationContext(compiled);
   const snapshot = await readPublishedSnapshot(compiled, context.contextHash);
+  const currentSourceSignature = projectSourceSignature(compiled, context.contextHash);
   const math = new Map(snapshot?.graph.nodes.map((node) => [node.id, node.status]) ?? []);
   const directory = path.join(auxLayout(root).generated, 'workbench');
   const rows: string[] = [];
@@ -82,11 +86,33 @@ export async function renderWorkbench(root: string, options: CompilerOptions = {
     rows.push(`<tr><td>${escape(session.fact_id)}</td><td>${escape(session.backend)}</td><td>${escape(session.requested_model)}</td><td>${escape(session.requested_effort)}</td><td>${escape(math.get(String(session.fact_id)) ?? '无当前数学快照')}</td><td>${escape(session.sealed === false ? '未封存（运行中或已中断）' : session.state)}</td><td>${escape(session.session_id)}</td><td>${link}</td></tr>`);
   }
   const bindingRows = (sources.bindings as JsonObject[]).map((binding) => `<tr><td>${escape(binding.fact_id)}</td><td>${escape(binding.binding_id)}</td><td>${escape(binding.binding_status)}</td><td>${escape(binding.error ?? JSON.stringify(binding.unresolved))}</td></tr>`).join('');
+  const executionByAttempt = new Map((sessions.sessions as JsonObject[]).filter((session) => typeof session.attempt_id === 'string').map((session) => [String(session.attempt_id), session]));
+  const bindingsByFact = new Map<string, string[]>();
+  for (const binding of sources.bindings as JsonObject[]) {
+    const key = String(binding.fact_id);
+    bindingsByFact.set(key, [...(bindingsByFact.get(key) ?? []), String(binding.binding_status)]);
+  }
+  const runRows: string[] = [];
+  let runIds: string[] = [];
+  try { runIds = (await readdir(path.join(workbenchRoot(root), 'runs'))).filter((id) => UUID.test(id)).sort(); } catch { /* No jobs yet. */ }
+  for (const id of runIds) {
+    let run: OperationResult;
+    try { run = await jobStatus(root, id); } catch { continue; }
+    for (const task of (run.tasks as JsonObject[] | undefined) ?? []) {
+      const local = task.local_verification as JsonObject | undefined;
+      const global = task.global_verification as JsonObject | undefined;
+      const metrics = local?.metrics as JsonObject | undefined;
+      const recentError = local?.latest_execution_error as JsonObject | undefined;
+      const attemptId = metrics?.attempt_id ?? recentError?.attempt_id ?? null;
+      const execution = executionByAttempt.get(String(attemptId));
+      runRows.push(`<tr><td>${escape(id)}</td><td>${escape(task.fact_id)}</td><td>${escape(run.source_signature === currentSourceSignature ? 'current' : 'stale')}</td><td>${escape(run.state)}</td><td>${escape(task.execution)}</td><td>${escape(task.commit)}</td><td>${escape(local?.status)}</td><td>${escape(global?.status)}</td><td>${escape(execution?.requested_model ?? 'unknown')}</td><td>${escape(execution?.session_id ?? 'unavailable')}</td><td>${escape(task.execution === 'reused' ? 'cache reuse' : execution?.duration_ms ?? 'unknown')}</td><td>${escape(JSON.stringify(execution?.usage ?? null))}</td><td>${escape(run.retry_of_task_id ?? '—')}</td><td>${escape((bindingsByFact.get(String(task.fact_id)) ?? ['unbound']).join(', '))}</td><td>${escape(attemptId ?? 'unavailable')}</td></tr>`);
+    }
+  }
   const output = path.join(auxLayout(root).generated, 'workbench.html');
-  const html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>证明审查追溯</title><style>body{font:16px system-ui;margin:2rem;line-height:1.6}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:.5rem;text-align:left;overflow-wrap:anywhere}pre{white-space:pre-wrap}a{color:#1565c0}</style><h1>证明审查追溯</h1><p>只读报告。执行状态、稿件一致性与数学状态分别记录。数学列来自当前有效快照；历史尝试不会被当作新的数学判定。会话操作在终端显式执行。</p><h2>执行与会话</h2><table><tr><th>目标</th><th>后端</th><th>配置模型</th><th>推理强度</th><th>当前数学状态</th><th>执行状态</th><th>会话 ID</th><th>记录</th></tr>${rows.join('')}</table><h2>稿件绑定</h2><table><tr><th>目标</th><th>绑定 ID</th><th>稿件状态</th><th>说明</th></tr>${bindingRows}</table><p>aligned 表示记录范围内的一致性审查，不表示数学证明通过。stale 不会自行清除数学缓存。</p></html>`;
+  const html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>证明审查追溯</title><style>body{font:16px system-ui;margin:2rem;line-height:1.6}table{border-collapse:collapse;width:100%}th,td{border:1px solid #bbb;padding:.5rem;text-align:left;overflow-wrap:anywhere}pre{white-space:pre-wrap}a{color:#1565c0}</style><h1>证明审查追溯</h1><p>只读报告。执行状态、稿件一致性与数学状态分别记录。数学列来自当前有效快照；历史尝试不会被当作新的数学判定。会话操作在终端显式执行。</p><h2>任务</h2><table><tr><th>Run</th><th>目标</th><th>源版本</th><th>Run 状态</th><th>执行</th><th>提交</th><th>局部数学</th><th>全局数学</th><th>模型</th><th>会话</th><th>耗时 ms</th><th>已报告用量</th><th>重试来源</th><th>稿件状态</th><th>Attempt</th></tr>${runRows.join('')}</table><h2>执行与会话</h2><table><tr><th>目标</th><th>后端</th><th>配置模型</th><th>推理强度</th><th>当前数学状态</th><th>执行状态</th><th>会话 ID</th><th>记录</th></tr>${rows.join('')}</table><h2>稿件绑定</h2><table><tr><th>目标</th><th>绑定 ID</th><th>稿件状态</th><th>说明</th></tr>${bindingRows}</table><p>aligned 表示记录范围内的一致性审查，不表示数学证明通过。stale 不会自行清除数学缓存。</p></html>`;
   await atomicWrite(output, html);
   return { operation: 'workbench-render', ok: sessions.ok !== false, output: path.relative(root, output).split(path.sep).join('/'), session_count: rows.length,
-    binding_count: (sources.bindings as JsonObject[]).length, diagnostics: sessions.diagnostics };
+    binding_count: (sources.bindings as JsonObject[]).length, task_count: runRows.length, diagnostics: sessions.diagnostics };
 }
 
 export async function runWorkbench(root: string, command: Extract<Command, { kind: 'workbench' }>, options: CompilerOptions): Promise<OperationResult> {
@@ -97,7 +123,17 @@ export async function runWorkbench(root: string, command: Extract<Command, { kin
     case 'sources-bind': return bindSource(root, command.id, command.manifest, options);
     case 'sources-status': return sourceStatus(root, command.fact, options);
     case 'sources-review': return reviewSource(root, command.id, command.settings, options);
+    case 'history-fact': return factHistory(root, command.id);
+    case 'history-compare': return compareAttempts(root, command.left, command.right);
+    case 'costs': return costs(root, command.runId, command.rates);
+    case 'jobs-plan': return planJobs(root, command.scope, command.fact, command.save, options);
+    case 'jobs-run': return runJobs(root, command.file, command.jobs, command.recheck, options);
+    case 'jobs-status': return jobStatus(root, command.id);
+    case 'jobs-recover': return { operation: 'workbench-jobs-recover', ok: true, ...(await recoverCoordinator(root, command.reason)) };
+    case 'jobs-control': return command.control === 'resume' ? resumeJob(root, command.id, options) : controlJob(root, command.id, command.control);
+    case 'jobs-retry': return retryTask(root, command.id, options);
     case 'render': return renderWorkbench(root, options);
+    case 'watch': throw new Error('watch uses the streaming CLI entrypoint');
     default: return command satisfies never;
   }
 }

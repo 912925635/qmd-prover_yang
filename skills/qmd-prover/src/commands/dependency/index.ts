@@ -32,9 +32,9 @@ export interface DependencyAnalysisResult extends OperationResult {
 }
 
 async function latestSnapshot(root: string, options: CompilerOptions = {}): Promise<ProjectSnapshot> {
-  const compilation = await compileProject(root, options);
+  const compilation = await compileProject(root, { ...options, write: false });
   const context = await verificationContext(compilation);
-  return resolveProjectSnapshot(compilation, context.contextHash, options);
+  return resolveProjectSnapshot(compilation, context.contextHash, { ...options, write: false });
 }
 
 export async function analyzeDependencies(root: string, operation: string, args: string[] = [], options: CompilerOptions & PathSearchOptions & DependencyQuery = {}): Promise<DependencyAnalysisResult> {

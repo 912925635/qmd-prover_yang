@@ -31,7 +31,7 @@ export async function beginAttempt(root: string, input: JsonObject, metadata: Js
   return { id, directory, execution, started: performance.now() };
 }
 
-export async function finishAttempt(attempt: Attempt, report: JsonObject, state: 'completed' | 'failed'): Promise<void> {
+export async function finishAttempt(attempt: Attempt, report: JsonObject, state: 'completed' | 'failed' | 'cancelled'): Promise<void> {
   try {
     await readFile(path.join(attempt.directory, 'seal.json'));
     throw new Error('A sealed attempt cannot be rewritten');

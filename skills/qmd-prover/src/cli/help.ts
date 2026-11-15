@@ -259,7 +259,33 @@ function node(path: string): HelpNode | undefined {
     case 'verification show':
       return { usage: ['qmd-prover verification show SUBMISSION_ID'], summary: 'Read one retained verification record by submission ID.', positional: true };
     case 'workbench':
-      return { usage: ['qmd-prover workbench <command>'], summary: 'Trace verifier sessions and bind TeX manuscripts without granting mathematical status.', children: ['sessions', 'sources', 'render'] };
+      return { usage: ['qmd-prover workbench <command>'], summary: 'Trace verifier sessions and bind TeX manuscripts without granting mathematical status.', children: ['sessions', 'sources', 'jobs', 'history', 'costs', 'watch', 'render'] };
+    case 'workbench watch':
+      return { usage: ['qmd-prover workbench watch [RUN_ID]'], summary: 'Stream read-only run status changes as JSON lines; never calls a model.', positional: true };
+    case 'workbench jobs':
+      return { usage: ['qmd-prover workbench jobs <command>'], children: ['plan', 'run', 'status', 'pause', 'resume', 'cancel', 'retry', 'recover'] };
+    case 'workbench jobs plan':
+      return { usage: ['qmd-prover workbench jobs plan project [--save FILE]', 'qmd-prover workbench jobs plan fact @ID [--save FILE]'], summary: 'Plan the selected dependency closure without invoking a model.', positional: true };
+    case 'workbench jobs run':
+      return { usage: ['qmd-prover workbench jobs run PLAN_FILE [--jobs 1|2|3] [--recheck]'], summary: 'Explicitly run frozen local checks and publish a current snapshot.', positional: true };
+    case 'workbench jobs status':
+      return { usage: ['qmd-prover workbench jobs status RUN_ID'], summary: 'Read execution, commit and mathematical states without invoking a model.', positional: true };
+    case 'workbench jobs recover':
+      return { usage: ['qmd-prover workbench jobs recover --reason TEXT'], summary: 'Explicitly archive a dead same-host coordinator owner; never steals a live or foreign owner.' };
+    case 'workbench jobs pause':
+    case 'workbench jobs resume':
+    case 'workbench jobs cancel':
+      return { usage: [`qmd-prover workbench jobs ${path.split(' ').at(-1)} RUN_ID`], summary: 'Control an active local run; cancel waits for process cleanup.', positional: true };
+    case 'workbench jobs retry':
+      return { usage: ['qmd-prover workbench jobs retry TASK_ID'], summary: 'Explicitly make a fresh attempt for a retained task.', positional: true };
+    case 'workbench history':
+      return { usage: ['qmd-prover workbench history <command>'], children: ['fact', 'compare'] };
+    case 'workbench history fact':
+      return { usage: ['qmd-prover workbench history fact @ID'], summary: 'Read retained attempts and compatible cache records without model calls.', positional: true };
+    case 'workbench history compare':
+      return { usage: ['qmd-prover workbench history compare ATTEMPT_A ATTEMPT_B'], summary: 'Compare frozen inputs, checker contracts and report fields without changing decisions.', positional: true };
+    case 'workbench costs':
+      return { usage: ['qmd-prover workbench costs [RUN_ID] [--rates FILE]'], summary: 'Show reported token usage and optionally estimate from an explicit sourced per-model rates file.', positional: true };
     case 'workbench sessions':
       return { usage: ['qmd-prover workbench sessions <command>'], children: ['list', 'show', 'resume'] };
     case 'workbench sessions list':

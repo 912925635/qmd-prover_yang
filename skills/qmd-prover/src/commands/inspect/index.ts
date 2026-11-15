@@ -5,11 +5,13 @@ import { auxLayout } from '../../core/infrastructure/auxiliary.js';
 import { SCHEMA_VERSION, byId, hasErrorCode } from '../../core/shared/core.js';
 import { adjacency, blockerPaths, subgraph, traverse } from '../../core/graph/algorithms.js';
 import { deriveGraphFindings } from '../../core/graph/findings.js';
-import { buildProjectSnapshot, publishProjectSnapshot, resolveProjectSnapshot } from '../../core/graph/snapshot.js';
+import { buildProjectSnapshot, publishProjectSnapshot, resolveProjectSnapshot, projectSourceSignature } from '../../core/graph/snapshot.js';
 import { compileProject } from '../../core/semantic/compiler.js';
 import { verificationContext } from '../../core/verification/protocol.js';
 import { verifyFacts, writeStatusProjection } from '../../core/graph/verify.js';
+import { withCoordinator } from '../../core/workbench/coordinator.js';
 import type { FactInspectionCheck, InspectionVerificationSummary, VerifiedFact } from '../../core/graph/verify.js';
+import type { VerifierMetrics, VerifierReport } from '../../core/shared/verdicts.js';
 import type { Diagnostic, JsonObject, OperationResult, CompilerOptions, SelectionOptions } from '../../core/shared/types.js';
 import type { DependencyGraph } from '../../core/semantic/dependency-graph.js';
 import type { SemanticResult } from '../../core/semantic/model.js';
@@ -53,8 +55,8 @@ function emptyGraph(): DependencyGraph { return { schema_version: SCHEMA_VERSION
 
 function emptyVerification(): InspectionVerificationSummary {
   return {
-    available: false, eligible: 0, verifier_calls: 0, cache_hits: 0, cache_misses: 0, unusable_cache_entries: 0,
-    verifier_duration_ms: 0, verifier_tokens: 0,
+    available: false, eligible: 0, verifier_calls: 0, cache_hits: 0, cache_misses: 0, recovered_attempts: 0, unusable_cache_entries: 0,
+    verifier_duration_ms: 0, verifier_tokens: 0, verifier_usage_unknown_attempts: 0,
     local_verified: 0, local_disproved: 0, local_rejected: 0, local_not_run: 0,
     global_verified: 0, global_disproved: 0, global_rejected: 0, global_blocked: 0, global_unverified: 0,
     global_open: 0, global_broken: 0, global_abandoned: 0
@@ -111,7 +113,7 @@ async function history(root: string, id: string): Promise<JsonObject[]> {
       try { entries = await readdir(selected); } catch (error) { if (!hasErrorCode(error, 'ENOENT')) throw error; }
       for (const name of entries.filter((entry) => entry.endsWith('.json')).sort()) {
         const record = await readJson<JsonObject>(path.join(selected, name));
-        if (record.target === id && typeof record.verdict === 'string') records.push(record);
+        if (record.target === id && (typeof record.verdict === 'string' || (record.report && typeof (record.report as JsonObject).verdict === 'string'))) records.push(record);
       }
     }
     return records.sort((left, right) => `${left.verified_at ?? ''}\0${left.submission_id ?? ''}`.localeCompare(`${right.verified_at ?? ''}\0${right.submission_id ?? ''}`));
@@ -121,14 +123,15 @@ async function history(root: string, id: string): Promise<JsonObject[]> {
   }
 }
 
-export async function inspectProject(root = process.cwd(), options: CompilerOptions & SelectionOptions = {}): Promise<InspectProjectResult> {
+async function inspectProjectOwned(root = process.cwd(), options: CompilerOptions & SelectionOptions & { jobs?: number; recheck?: boolean; signal?: AbortSignal; runId?: string; beforeDispatch?: () => Promise<boolean>; onTaskEvent?: (factId: string, state: string) => Promise<void>; onFrozenPackets?: (packets: Array<{ fact_id: string; packet_hash: string }>) => Promise<void>; expectedSourceSignature?: string; projectStatus?: boolean; recoveredReports?: Record<string, { attempt_id: string; packet_hash: string; verification_key: string; report: VerifierReport; metrics: VerifierMetrics }> } = {}): Promise<InspectProjectResult> {
   root = path.resolve(root);
   const compilation = await compileProject(root, options);
   const context = await verificationContext(compilation);
+  if (options.expectedSourceSignature && projectSourceSignature(compilation, context.contextHash) !== options.expectedSourceSignature) throw new Error('Plan became stale before packet preparation');
   const run = await verifyFacts(compilation, context, options);
   const snapshot = buildProjectSnapshot(compilation, context.contextHash, run.diagnostics);
   const snapshotPublished = await publishProjectSnapshot(compilation, snapshot, options);
-  await writeStatusProjection(compilation, run, options);
+  const projectionIssues = options.projectStatus !== false ? await writeStatusProjection(compilation, run, options) : [];
   const diagnostics = snapshot.diagnostics;
   const facts = run.facts.map((fact) => factCheck(fact, diagnostics));
   const goalIds = new Set(compilation.goals.map((goal) => goal.id));
@@ -142,6 +145,7 @@ export async function inspectProject(root = process.cwd(), options: CompilerOpti
     complete: compilation.complete,
     snapshot_id: snapshot.snapshot_id,
     snapshot_published: snapshotPublished,
+    projection_issues: projectionIssues,
     scope: { type: 'project', path: '.' },
     summary: {
       ...snapshot.summary,
@@ -182,7 +186,7 @@ function factFailure(id: string, diagnostics: Diagnostic[]): InspectFactResult {
   };
 }
 
-export async function inspectFact(root: string, requested: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectFactResult> {
+async function inspectFactOwned(root: string, requested: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectFactResult> {
   root = path.resolve(root);
   const id = cleanId(requested);
   const compilation = await compileProject(root, options);
@@ -200,7 +204,7 @@ export async function inspectFact(root: string, requested: string, options: Comp
   const run = await verifyFacts(compilation, context, { ...options, selectedIds: [id] });
   const snapshot = buildProjectSnapshot(compilation, context.contextHash, run.diagnostics);
   const snapshotPublished = await publishProjectSnapshot(compilation, snapshot, options);
-  await writeStatusProjection(compilation, run, options);
+  const projectionIssues = await writeStatusProjection(compilation, run, options);
   const dependencyIds = traverse(snapshot.graph, id);
   const selected = new Set([id, ...dependencyIds]);
   const graph = subgraph(snapshot.graph, selected);
@@ -228,6 +232,7 @@ export async function inspectFact(root: string, requested: string, options: Comp
     global_status: check.global_verification.status,
     snapshot_id: snapshot.snapshot_id,
     snapshot_published: snapshotPublished,
+    projection_issues: projectionIssues,
     scope: { type: 'fact', id },
     fact: result,
     check,
@@ -247,7 +252,7 @@ function isWithinPath(file: string, selected: string, isDirectory: boolean): boo
   return isDirectory ? file === selected || file.startsWith(`${selected}/`) : file === selected;
 }
 
-export async function inspectPath(root: string, requestedPath: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectPathResult> {
+async function inspectPathOwned(root: string, requestedPath: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectPathResult> {
   root = path.resolve(root);
   const absolute = path.resolve(root, requestedPath);
   const relative = relativePosix(root, absolute);
@@ -284,7 +289,7 @@ export async function inspectPath(root: string, requestedPath: string, options: 
   const run = await verifyFacts(compilation, context, { ...options, selectedIds });
   const snapshot = buildProjectSnapshot(compilation, context.contextHash, run.diagnostics);
   const published = await publishProjectSnapshot(compilation, snapshot, options);
-  await writeStatusProjection(compilation, run, options);
+  const projectionIssues = await writeStatusProjection(compilation, run, options);
   const contextIds = new Set<string>(selectedIds);
   for (const id of selectedIds) for (const dependency of traverse(snapshot.graph, id)) contextIds.add(dependency);
   const graph = subgraph(snapshot.graph, contextIds);
@@ -296,6 +301,7 @@ export async function inspectPath(root: string, requestedPath: string, options: 
     ok: facts.every((fact) => fact.mechanical.status === 'pass' && fact.local_verification.reason !== 'verifier-error')
       && diagnostics.every((item) => item.severity !== 'error'),
     snapshot_id: snapshot.snapshot_id, snapshot_published: published,
+    projection_issues: projectionIssues,
     scope: { type: info.isDirectory() ? 'folder' : 'file', path: relative },
     summary: {
       files: selectedFiles.size, facts: facts.length,
@@ -309,4 +315,19 @@ export async function inspectPath(root: string, requestedPath: string, options: 
     findings: deriveGraphFindings({ graph, manifest, diagnostics }, { selectedIds, selectedFiles }),
     staleness: stalenessReport(true, snapshot.snapshot_id), verification: run.verification, diagnostics
   };
+}
+
+export async function inspectProject(root = process.cwd(), options: CompilerOptions & SelectionOptions & { jobs?: number; recheck?: boolean; signal?: AbortSignal; runId?: string; beforeDispatch?: () => Promise<boolean>; onTaskEvent?: (factId: string, state: string) => Promise<void>; onFrozenPackets?: (packets: Array<{ fact_id: string; packet_hash: string }>) => Promise<void>; expectedSourceSignature?: string; projectStatus?: boolean; recoveredReports?: Record<string, { attempt_id: string; packet_hash: string; verification_key: string; report: VerifierReport; metrics: VerifierMetrics }> } = {}): Promise<InspectProjectResult> {
+  return options.write === false ? inspectProjectOwned(root, options)
+    : withCoordinator(root, 'inspect-project', () => inspectProjectOwned(root, options));
+}
+
+export async function inspectFact(root: string, requested: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectFactResult> {
+  return options.write === false ? inspectFactOwned(root, requested, options)
+    : withCoordinator(root, `inspect-fact:${requested}`, () => inspectFactOwned(root, requested, options));
+}
+
+export async function inspectPath(root: string, requestedPath: string, options: CompilerOptions & SelectionOptions = {}): Promise<InspectPathResult> {
+  return options.write === false ? inspectPathOwned(root, requestedPath, options)
+    : withCoordinator(root, `inspect-path:${requestedPath}`, () => inspectPathOwned(root, requestedPath, options));
 }

@@ -1,13 +1,13 @@
 # QMD-Prover 证明审查工作台技术设计
 
-日期：2026-11-07。状态：P0 已在 `feature/workbench-p0` 实现；P1/P2 保持设计阶段。
+日期：2026-11-07。状态：P0 已在 `feature/workbench-p0` 实现；P1/P2 在 `feature/workbench-p1-p2` 开发和验收中，结果见 [实施交接记录](proof-review-workbench-implementation.md)。
 
 代码基线：`b4bfbd84c410966d2155ffc2751407eefabcb9f6`，分支 `feature/windows-compat`。
 本设计覆盖会话追溯、TeX–QMD 绑定、并行队列、历史比较和任务成本控制五项功能。
 采用附加记录和协调层扩展现有引擎，保留数学验证、依赖图和 Shadow Review 的职责边界。
 P0 先建立可追溯性；P1 引入受控并行和完整历史；P2 增加任务控制台。
-P0 的实际接口以 [workbench 命令指南](../../skills/qmd-prover/references/workbench.md) 为准；
-本文中的 run/queue、跨模型比较、成本控制和 `--recheck` 仍为拟议接口。
+已交付接口以 [workbench 命令指南](../../skills/qmd-prover/references/workbench.md) 为准；
+本文保留工程验收要求，未完成的边界见实施交接记录。
 
 ## 1. 现有实现与设计约束
 
@@ -453,7 +453,7 @@ Origin 和控制 token。导出的静态 HTML 只读，不承诺取消或恢复�
 
 ## 8. 拟议命令与用户流程
 
-保留全部已有命令与默认 JSON 含义，新增 `workbench` 命名空间。P0 命令已实现，P1/P2 命令仍为草案。
+保留全部已有命令与默认 JSON 含义，新增 `workbench` 命名空间。下表是设计接口；已交付范围与差异以命令指南和实施交接记录为准。
 
 | 阶段 | 命令草案 | 作用与副作用 |
 | --- | --- | --- |

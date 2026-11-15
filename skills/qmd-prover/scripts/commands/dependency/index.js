@@ -7,9 +7,9 @@ import { resolveProjectSnapshot } from '../../core/graph/snapshot.js';
 import { compileProject } from '../../core/semantic/compiler.js';
 import { verificationContext } from '../../core/verification/protocol.js';
 async function latestSnapshot(root, options = {}) {
-    const compilation = await compileProject(root, options);
+    const compilation = await compileProject(root, { ...options, write: false });
     const context = await verificationContext(compilation);
-    return resolveProjectSnapshot(compilation, context.contextHash, options);
+    return resolveProjectSnapshot(compilation, context.contextHash, { ...options, write: false });
 }
 export async function analyzeDependencies(root, operation, args = [], options = {}) {
     // Validate bounded options before any project scan so syntax errors are never hidden by graph failures.

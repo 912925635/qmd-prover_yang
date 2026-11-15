@@ -2,6 +2,7 @@ import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { AUX, hasErrorCode } from '../shared/core.js';
 import { atomicJson, atomicWrite, exists } from './files.js';
+import { withCoordinator } from '../workbench/coordinator.js';
 export { AUX } from '../shared/core.js';
 /** Absolute path to a file or directory inside the project's `.qmd-prover/` state directory. */
 export function auxPath(root, ...segments) {
@@ -145,27 +146,29 @@ export async function appendEvent(root, event) {
     }
 }
 export async function withWriteLock(root, operation, { timeoutMs = 5000 } = {}) {
-    const lock = auxLayout(root).writeLock;
-    await mkdir(path.dirname(lock), { recursive: true });
-    const started = Date.now();
-    while (true) {
+    return withCoordinator(root, 'canonical-write', async () => {
+        const lock = auxLayout(root).writeLock;
+        await mkdir(path.dirname(lock), { recursive: true });
+        const started = Date.now();
+        while (true) {
+            try {
+                await mkdir(lock);
+                await atomicJson(path.join(lock, 'owner.json'), { pid: process.pid, acquired_at: new Date().toISOString() });
+                break;
+            }
+            catch (error) {
+                if (!hasErrorCode(error, 'EEXIST'))
+                    throw error;
+                if (Date.now() - started >= timeoutMs)
+                    throw new Error(`Timed out waiting for canonical write lock: ${lock}`);
+                await new Promise((resolve) => setTimeout(resolve, 40));
+            }
+        }
         try {
-            await mkdir(lock);
-            await atomicJson(path.join(lock, 'owner.json'), { pid: process.pid, acquired_at: new Date().toISOString() });
-            break;
+            return await operation();
         }
-        catch (error) {
-            if (!hasErrorCode(error, 'EEXIST'))
-                throw error;
-            if (Date.now() - started >= timeoutMs)
-                throw new Error(`Timed out waiting for canonical write lock: ${lock}`);
-            await new Promise((resolve) => setTimeout(resolve, 40));
+        finally {
+            await rm(lock, { recursive: true, force: true });
         }
-    }
-    try {
-        return await operation();
-    }
-    finally {
-        await rm(lock, { recursive: true, force: true });
-    }
+    });
 }

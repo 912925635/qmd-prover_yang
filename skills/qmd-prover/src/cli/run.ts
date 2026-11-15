@@ -1,5 +1,6 @@
 import { renderHelp, rootUsage } from './help.js';
 import { runWorkbench } from '../commands/workbench/index.js';
+import { watchJobs } from '../core/workbench/jobs.js';
 import { parseCommand } from './parse.js';
 import { inspectFact, inspectPath, inspectProject } from '../commands/inspect/index.js';
 import { analyzeDependencies } from '../commands/dependency/index.js';
@@ -56,6 +57,7 @@ export async function main(
   if (PROJECT_COMMANDS.has(command.kind)) await warnCompatibility(root);
   switch (command.kind) {
     case 'workbench':
+      if (command.action === 'watch') { await watchJobs(root, command.id, (line) => process.stdout.write(line)); return; }
       emit(await runWorkbench(root, command, options), false);
       return;
     case 'usage':

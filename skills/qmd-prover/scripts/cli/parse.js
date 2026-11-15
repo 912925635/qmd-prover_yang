@@ -260,6 +260,49 @@ function parseWorkbench(rest) {
     const [group, sub, ...tail] = rest;
     if (group === 'render' && sub === undefined)
         return { kind: 'workbench', action: 'render' };
+    if (group === 'watch' && tail.length === 0 && (sub === undefined || !sub.startsWith('--')))
+        return { kind: 'workbench', action: 'watch', id: sub };
+    if (group === 'history' && sub === 'fact' && tail.length === 1)
+        return { kind: 'workbench', action: 'history-fact', id: tail[0] };
+    if (group === 'history' && sub === 'compare' && tail.length === 2)
+        return { kind: 'workbench', action: 'history-compare', left: tail[0], right: tail[1] };
+    if (group === 'costs') {
+        const parsed = optionValues([sub, ...tail].filter((value) => value !== undefined), new Set(['rates']), new Set());
+        if (parsed.positionals.length > 1)
+            throw new Error('costs accepts optional RUN_ID and --rates FILE');
+        return { kind: 'workbench', action: 'costs', runId: parsed.positionals[0], rates: optionString(parsed.options.rates) };
+    }
+    if (group === 'jobs' && sub === 'plan') {
+        const parsed = optionValues(tail, new Set(['save']), new Set());
+        const [scope, fact] = parsed.positionals;
+        if (scope !== 'project' && !(scope === 'fact' && fact && parsed.positionals.length === 2))
+            throw new Error('jobs plan requires project or fact @ID');
+        if (scope === 'project' && parsed.positionals.length !== 1)
+            throw new Error('jobs plan project accepts no fact');
+        return { kind: 'workbench', action: 'jobs-plan', scope, fact, save: optionString(parsed.options.save) };
+    }
+    if (group === 'jobs' && sub === 'run') {
+        const parsed = optionValues(tail, new Set(['jobs']), new Set(['recheck']));
+        if (parsed.positionals.length !== 1)
+            throw new Error('jobs run requires PLAN_FILE');
+        const jobs = parsed.options.jobs === undefined ? 1 : Number(parsed.options.jobs);
+        if (!Number.isInteger(jobs) || jobs < 1 || jobs > 3)
+            throw new Error('--jobs must be 1, 2 or 3');
+        return { kind: 'workbench', action: 'jobs-run', file: parsed.positionals[0], jobs, recheck: parsed.options.recheck === true };
+    }
+    if (group === 'jobs' && sub === 'status' && tail.length === 1)
+        return { kind: 'workbench', action: 'jobs-status', id: tail[0] };
+    if (group === 'jobs' && (sub === 'pause' || sub === 'resume' || sub === 'cancel') && tail.length === 1)
+        return { kind: 'workbench', action: 'jobs-control', id: tail[0], control: sub };
+    if (group === 'jobs' && sub === 'retry' && tail.length === 1)
+        return { kind: 'workbench', action: 'jobs-retry', id: tail[0] };
+    if (group === 'jobs' && sub === 'recover') {
+        const parsed = optionValues(tail, new Set(['reason']), new Set());
+        const reason = optionString(parsed.options.reason);
+        if (parsed.positionals.length || !reason?.trim())
+            throw new Error('jobs recover requires --reason TEXT');
+        return { kind: 'workbench', action: 'jobs-recover', reason };
+    }
     if (group === 'sessions' && sub === 'list') {
         const parsed = optionValues(tail, new Set(['fact']), new Set());
         if (parsed.positionals.length)
